@@ -62,12 +62,13 @@ pub(all) enum TargetState {
 ///|
 /// MoonBit 侧目标包装值。`handle` 为 C 侧裸指针，`pid` 用于 `/proc` 路径构造。
 /// `handle` 只能由 `Target::detach` 释放一次。
-/// `state` 为可变状态机字段：`step` 进入 `Stepping`、`detach` 进入 `Detached`；
+/// `state` 为可变状态机字段（**私有字段**，冻结前 P0 决策 5，经只读访问器
+/// `Target::state()` 读取）：`step` 进入 `Stepping`、`detach` 进入 `Detached`；
 /// 释放失败进入 `Failed`。实现保证它与 C 侧句柄状态一致（见 `target.mbt`）。
 pub(all) struct Target {
   pid : Pid
   handle : TraceeRaw
-  mut state : TargetState
+  priv mut state : TargetState
 }
 
 ///|
@@ -99,23 +100,26 @@ pub trait MemoryView {
 }
 
 ///|
-/// ---- 外部 C shim 声明 ----
+/// ---- 外部 C shim 声明（**包私有，非公共 API**；冻结前 P0 决策 6）----
 /// 符号由 `stub/ptrace_stub.c`（native-stub）提供：桌面 stub 模拟 tracee 句柄、
 /// 内存页与 /proc 文本；真实 libc ptrace / process_vm_readv 转发留待 Linux/设备轮次。
 /// 内部状态码与「/proc 文本包」协议见 stub 文件头部注释。
+/// 可见性：7 个 `mb_ptrace_*` 均为**私有实现 ABI**（不再出现在公开快照），
+/// MoonBit 层只经 `Target::{attach,maps,read_bytes,write_bytes,step,threads,detach}` 调用；
+/// 符号名与签名保持不变，R2 真实对接无需改 ABI。
 
 ///|
 /// `PTRACE_ATTACH` 并 waitpid 停住目标；返回 C 侧句柄（0 表示失败）。
-pub extern "C" fn mb_ptrace_attach(pid : Int32) -> TraceeRaw = "mb_ptrace_attach"
+extern "C" fn mb_ptrace_attach(pid : Int32) -> TraceeRaw = "mb_ptrace_attach"
 
 ///|
 /// `PTRACE_DETACH` 并释放句柄（唯一释放点，且只能一次）。
-pub extern "C" fn mb_ptrace_detach(handle : TraceeRaw) -> Int32 = "mb_ptrace_detach"
+extern "C" fn mb_ptrace_detach(handle : TraceeRaw) -> Int32 = "mb_ptrace_detach"
 
 ///|
 /// `process_vm_readv`；`dst` 由 C 侧填充，`#borrow` 表示 MoonBit 保留所有权。
 #borrow(dst)
-pub extern "C" fn mb_ptrace_read_mem(
+extern "C" fn mb_ptrace_read_mem(
   handle : TraceeRaw,
   address : Address,
   dst : FixedArray[Byte],
@@ -125,7 +129,7 @@ pub extern "C" fn mb_ptrace_read_mem(
 ///|
 /// `process_vm_writev`；`src` 为 `#borrow`，C 侧只读取。
 #borrow(src)
-pub extern "C" fn mb_ptrace_write_mem(
+extern "C" fn mb_ptrace_write_mem(
   handle : TraceeRaw,
   address : Address,
   src : Bytes,
@@ -134,12 +138,12 @@ pub extern "C" fn mb_ptrace_write_mem(
 
 ///|
 /// 单步（`PTRACE_SINGLESTEP`）；返回 0 成功。
-pub extern "C" fn mb_ptrace_step(handle : TraceeRaw) -> Int32 = "mb_ptrace_step"
+extern "C" fn mb_ptrace_step(handle : TraceeRaw) -> Int32 = "mb_ptrace_step"
 
 ///|
 /// 读取 `/proc/<pid>/maps` 全文到调用方缓冲；`dst` 为 `#borrow`。
 #borrow(dst)
-pub extern "C" fn mb_ptrace_read_maps(
+extern "C" fn mb_ptrace_read_maps(
   pid : Int32,
   dst : FixedArray[Byte],
   capacity : Int32,
@@ -147,7 +151,7 @@ pub extern "C" fn mb_ptrace_read_maps(
 
 ///|
 /// 读取 `/proc/<pid>/task` 目录条目数（供线程枚举分配缓冲）。
-pub extern "C" fn mb_ptrace_task_count(pid : Int32) -> Int32 = "mb_ptrace_task_count"
+extern "C" fn mb_ptrace_task_count(pid : Int32) -> Int32 = "mb_ptrace_task_count"
 
 ///|
 /// ---- MoonBit 侧公开 API ----

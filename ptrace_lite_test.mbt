@@ -1,6 +1,11 @@
 // Blackbox tests run against the package's public API. Use `@ptrace_lite` to import.
 // 桌面 stub 注：走 stub/ptrace_stub.c 的模拟 tracee（pid 4242 正常、7001 SELinux、
 // 7002 内核不支持、7003 权限拒绝、其余不存在）；真实 libc 转发留待 Linux/设备轮次。
+//
+// 冻结前 P0（决策 5/6）：`Target.state` 为私有字段，黑盒经只读访问器
+// `Target::state()` 读取；7 个 `mb_ptrace_*` shim 已移出公开 API，
+// 直接调用 shim 的用例（capacity -7、stale handle -8）转白盒
+// `ptrace_lite_wbtest.mbt`，黑盒保留等价的 MoonBit 层语义断言。
 
 ///|
 /// 内部：断言回调抛出 `PtraceError` 并返回错误值。
@@ -18,7 +23,7 @@ fn expect_ptrace_error(
 /// 全链路（走 stub）：attach → maps → read → write → step → threads → detach。
 test "full chain: attach->maps->read->write->step->threads->detach" {
   let t = @ptrace_lite.Target::attach(4242)
-  assert_true(t.state is @ptrace_lite.TargetState::Attached)
+  assert_true(t.state() is @ptrace_lite.TargetState::Attached)
   // maps：4 个模拟区间，升序
   let regions = t.maps()
   assert_eq(regions.length(), 4)
@@ -52,7 +57,7 @@ test "full chain: attach->maps->read->write->step->threads->detach" {
   assert_eq(back, b"XY")
   // step：state 进入 Stepping（API.md 语义：仅未 attach 拒绝读写）
   t.step()
-  assert_true(t.state is @ptrace_lite.TargetState::Stepping)
+  assert_true(t.state() is @ptrace_lite.TargetState::Stepping)
   let after_step = t.read_bytes(0x10000UL, 1)
   assert_eq(after_step, b"A")
   // threads：与 mb_ptrace_task_count 交叉校验
@@ -65,7 +70,7 @@ test "full chain: attach->maps->read->write->step->threads->detach" {
   assert_eq(threads[1].name, "sim-worker")
   // detach：唯一释放
   t.detach()
-  assert_true(t.state is @ptrace_lite.TargetState::Detached)
+  assert_true(t.state() is @ptrace_lite.TargetState::Detached)
 }
 
 ///|
@@ -77,6 +82,9 @@ test "read/write rejected when not attached" {
   assert_true(e1 is @ptrace_lite.PtraceError::NotAttached(4242))
   let e2 = expect_ptrace_error(() => t.write_bytes(0x10000UL, b"X"))
   assert_true(e2 is @ptrace_lite.PtraceError::NotAttached(4242))
+  // detach 后单步同样拒绝（原 raw shim 断言 -8 已随 shim 私有化转白盒）
+  let e3 = expect_ptrace_error(() => t.step())
+  assert_true(e3 is @ptrace_lite.PtraceError::NotAttached(4242))
 }
 
 ///|
@@ -111,27 +119,11 @@ test "attach twice raises AlreadyAttached" {
 }
 
 ///|
-/// 缓冲容量校验：shim 侧对 capacity / length 超限返回 -7；read_maps 为 snprintf 语义。
-test "capacity checks" {
-  let small : FixedArray[Byte] = FixedArray::make(4, b'\x00')
-  // capacity 超出 dst 容量 → -7
-  assert_eq(@ptrace_lite.mb_ptrace_read_maps(4242, small, 100), -7)
-  // 截断写入 + 返回所需长度
-  let need = @ptrace_lite.mb_ptrace_read_maps(4242, small, 4)
-  assert_true(need > 4)
-  let t = @ptrace_lite.Target::attach(4242)
-  let dst : FixedArray[Byte] = FixedArray::make(4, b'\x00')
-  // length 超出 dst 容量 → -7
-  assert_eq(@ptrace_lite.mb_ptrace_read_mem(t.handle, 0x10000UL, dst, 10), -7)
-  // length 超出 src 容量 → -7
-  assert_eq(
-    @ptrace_lite.mb_ptrace_write_mem(t.handle, 0x10000UL, b"XY", 10),
-    -7,
-  )
-  // 零长度读合法
-  assert_eq(@ptrace_lite.mb_ptrace_read_mem(t.handle, 0x10000UL, dst, 0), 0)
-  t.detach()
-}
+/// 缓冲容量校验（shim ABI 语义，冻结前随 shim 私有化转白盒：
+/// 见 `ptrace_lite_wbtest.mbt` 的 "internal: shim capacity checks"）。
+///
+/// 黑盒等价语义：MoonBit 层按请求长度自建缓冲，容量由 API 保证，
+/// 非法长度/地址仍以 `PtraceError` 可判（见 "illegal address and length"）。
 
 ///|
 /// 非法地址 / 不可写页 / 负长度 / 地址溢出。
@@ -156,15 +148,9 @@ test "illegal address and length" {
 }
 
 ///|
-/// 空句柄 / 失效句柄被 shim 拒绝（-8）。
-test "stale handle rejected" {
-  let t = @ptrace_lite.Target::attach(4242)
-  let h = t.handle
-  t.detach()
-  assert_eq(@ptrace_lite.mb_ptrace_step(h), -8)
-  assert_eq(@ptrace_lite.mb_ptrace_detach(h), -8)
-  assert_eq(@ptrace_lite.mb_ptrace_task_count(4242), 2)
-}
+/// 空句柄 / 失效句柄被 shim 拒绝（-8）：随 shim 私有化转白盒，
+/// 见 `ptrace_lite_wbtest.mbt` 的 "internal: stale handle rejected"；
+/// 黑盒等价语义由 "read/write rejected when not attached" 覆盖。
 
 ///|
 /// parse_maps golden：常规 /proc/pid/maps（文件映射、匿名映射、权限位、偏移、

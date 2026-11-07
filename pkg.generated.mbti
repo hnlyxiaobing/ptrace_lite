@@ -6,20 +6,6 @@ import {
 }
 
 // Values
-pub fn mb_ptrace_attach(Int32) -> TraceeRaw
-
-pub fn mb_ptrace_detach(TraceeRaw) -> Int32
-
-pub fn mb_ptrace_read_maps(Int32, FixedArray[Byte], Int32) -> Int32
-
-pub fn mb_ptrace_read_mem(TraceeRaw, UInt64, FixedArray[Byte], Int32) -> Int32
-
-pub fn mb_ptrace_step(TraceeRaw) -> Int32
-
-pub fn mb_ptrace_task_count(Int32) -> Int32
-
-pub fn mb_ptrace_write_mem(TraceeRaw, UInt64, Bytes, Int32) -> Int32
-
 pub fn parse_maps(String) -> Array[MemoryRegion] raise PtraceError
 
 // Errors
@@ -61,12 +47,13 @@ pub(all) struct MemoryRegion {
 pub(all) struct Target {
   pid : Int32
   handle : TraceeRaw
-  mut state : TargetState
+  // private fields
 }
 pub fn Target::attach(Int32) -> Self raise PtraceError
 pub fn Target::detach(Self) -> Unit raise PtraceError
 pub fn Target::maps(Self) -> Array[MemoryRegion] raise PtraceError
 pub fn Target::read_bytes(Self, UInt64, Int32) -> Bytes raise PtraceError
+pub fn Target::state(Self) -> TargetState
 pub fn Target::step(Self) -> Unit raise PtraceError
 pub fn Target::threads(Self) -> Array[ThreadInfo] raise PtraceError
 pub fn Target::write_bytes(Self, UInt64, Bytes) -> Unit raise PtraceError

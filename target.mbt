@@ -190,6 +190,14 @@ fn parse_task_section(
 /// ---- MoonBit 侧公开 API ----
 
 ///|
+/// 只读访问目标状态机当前状态（`Target.state` 为**私有字段**，
+/// 经此访问器读取；冻结前 P0 决策 5：字段级可见性收紧 + 只读访问器，
+/// 其余公开方法签名零变化）。
+pub fn Target::state(self : Target) -> TargetState {
+  self.state
+}
+
+///|
 /// attach 到目标进程并停住所有线程。
 ///
 /// - 获取资源：C 侧 tracee 句柄；失败时不持有任何资源。
@@ -283,7 +291,8 @@ pub fn Target::threads(self : Target) -> Array[ThreadInfo] raise PtraceError {
 
 ///|
 /// detach 并释放 C 句柄（唯一释放点）。
-/// 重复调用（`Detached` / `Failed`）报 `NotAttached`，不会二次释放；
+/// **不会二次释放，重复调用返回明确错误（`NotAttached`）**：
+/// 状态为 `Detached` / `Failed`（未 attach 或句柄已释放）时直接拒绝；
 /// 释放失败进入 `Failed` 并报 `DetachFailed`。
 pub fn Target::detach(self : Target) -> Unit raise PtraceError {
   match self.state {

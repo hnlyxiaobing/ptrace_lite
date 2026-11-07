@@ -1,6 +1,6 @@
 # ptrace_lite · 设计契约（DESIGN.md）
 
-> Round-1 / 2026-11-06 ｜ 状态：架构与声明可评审，无系统调用逻辑、无 shim 实现
+> Round-1.5 实现轮 + **冻结前 P0 整改（R2 准备轮）** ｜ 状态：MoonBit 层 API 全部实现（桌面 C stub 双路径）；无真实 libc 转发、无设备实测（留待 Linux/设备轮次）
 
 ## 1. 分层位置与职责
 
@@ -10,7 +10,7 @@ L2 动态插桩层的**进程外轻量控制 FFI 封装**。职责：把 libc pt
 
 ```
 组合根（选择插桩方案）
-   ├─► ptrace_lite::Target::attach ──► mb_ptrace_* shim ──► libc ptrace / process_vm_* / /proc
+   ├─► ptrace_lite::Target::attach ──► mb_ptrace_* shim（包私有 ABI）──► libc ptrace / process_vm_* / /proc
    └─► frida_gum_ffi::Gum          （互斥备选，W2 之后且有门禁）
 ```
 
@@ -27,16 +27,16 @@ L2 动态插桩层的**进程外轻量控制 FFI 封装**。职责：把 libc pt
 | `MemoryProtection { read, write, execute, private }` | maps 权限位 |
 | `MemoryRegion { start, end, protection, offset, device, inode, path? }` | `/proc/<pid>/maps` 一行；`path` 为 `String?`（匿名映射） |
 | `ThreadInfo { tid, name, state }` | `/proc/<pid>/task` 摘要 |
-| `TargetState` | `Detached` / `Attached` / `Stepping` / `Failed` 状态机 |
-| `Target { pid, handle, state }` | MoonBit 侧包装值；`handle` 只能由 `detach` 释放一次 |
+| `TargetState` | `Detached` / `Attached` / `Stepping` / `Failed` 状态机（四分支均被实际代码路径使用，保留） |
+| `Target { pid, handle, state }` | MoonBit 侧包装值；`handle` 只能由 `detach` 释放一次；**`state` 为 `priv` 私有字段（冻结前 P0 决策 5），经只读访问器 `Target::state()` 读取**，其余公开方法签名零变化 |
 | `PtraceError` | `pub suberror`，12 个可判定错误构造 |
-| `MemoryView` trait | `read_bytes(Self, Address, Int)` / `write_bytes(Self, Address, Bytes)`，供组合根做插桩方案替换 |
+| `MemoryView` trait | `read_bytes(Self, Address, Int32)` / `write_bytes(Self, Address, Bytes)`，供组合根做插桩方案替换；**`pub impl MemoryView for Target` 已冻结前追认（决策 7）** |
 
-> 设计取舍：`Target` 是**值类型**而非「不透明对象 + 全局注册表」，因为本轮禁止任何状态管理逻辑；`state` 字段把「未 attach 时拒绝读写」的约束变成可检查的显式数据。实现轮须保证它与 C 侧句柄状态一致。
+> 设计取舍：`Target` 是**值类型**而非「不透明对象 + 全局注册表」，因为本轮禁止任何状态管理逻辑；`state` 字段把「未 attach 时拒绝读写」的约束变成可检查的显式数据。实现轮须保证它与 C 侧句柄状态一致。冻结前 P0 起该字段**私有化**，外部只经 `Target::state()` 只读观察，防止包外篡改状态机。
 
 ## 4. 错误模型
 
-`PtraceError`：`AttachDenied(Pid, String)`、`DetachFailed(Pid, String)`、`NotAttached(Pid)`、`AlreadyAttached(Pid)`、`ProcessNotFound(Pid)`、`MapsParseFailed(Int, String)`、`ReadFailed(Address, Int, String)`、`WriteFailed(Address, Int, String)`、`StepFailed(Pid, String)`、`ThreadEnumerateFailed(Pid, String)`、`UnsupportedKernel(String)`、`SelinuxDenied(String)`。
+`PtraceError`：`AttachDenied(Pid, String)`、`DetachFailed(Pid, String)`、`NotAttached(Pid)`、`AlreadyAttached(Pid)`、`ProcessNotFound(Pid)`、`MapsParseFailed(Int32, String)`、`ReadFailed(Address, Int32, String)`、`WriteFailed(Address, Int32, String)`、`StepFailed(Pid, String)`、`ThreadEnumerateFailed(Pid, String)`、`UnsupportedKernel(String)`、`SelinuxDenied(String)`。
 
 全部失败型 API 统一 `-> T raise PtraceError`（不用 `Result[T, E]`）；`String` 参数用于承载 errno / 内核消息，便于设备实测时定位。错误只在本模块内产生，组合根负责映射为上层线索报告。
 
@@ -49,7 +49,7 @@ L2 动态插桩层的**进程外轻量控制 FFI 封装**。职责：把 libc pt
 | maps 文本缓冲 | `FixedArray[Byte]` | 调用方持有 | `#borrow(dst)` + `capacity`，返回实际长度 |
 | 数组 / 字符串结果 | MoonBit 分配 | GC | 无外部释放义务 |
 
-`Target::detach` 幂等；重复调用返回 `NotAttached`，不得二次 `PTRACE_DETACH`。所有 read/write 在 `state != Attached` 时必须拒绝（契约写进 `MemoryView` 的文档注释）。
+`Target::detach` **不会二次释放，重复调用返回明确错误（`NotAttached`）**，不得二次 `PTRACE_DETACH`；释放失败进入 `Failed` 并报 `DetachFailed`。状态守卫 `ensure_open` 仅放行 `Attached` / `Stepping`，`Detached` / `Failed` 一律 `NotAttached`（契约写进 `MemoryView` 的文档注释）。
 
 ## 6. 线程 / 并发边界
 
@@ -70,11 +70,11 @@ L2 动态插桩层的**进程外轻量控制 FFI 封装**。职责：把 libc pt
 | 类别 | 声明 | 规则 |
 |---|---|---|
 | 外部类型 | `TraceeRaw`（`#external pub type`） | C `void*`；不引用计数；**永不跨模块传递** |
-| 外部函数 | 7 个 `pub extern "C" fn mb_ptrace_* = "…"` | 统一返回 `Int` status（0 = 成功，或 0 = 空句柄，按各 shim 语义） |
+| 外部函数 | 7 个 `extern "C" fn mb_ptrace_* = "…"`（**包私有，私有实现 ABI、非公共 API**；冻结前 P0 决策 6 移出公开 API） | 统一返回 `Int32` status（0 = 成功，或 0 = 空句柄，按各 shim 语义） |
 | 缓冲所有权 | `mb_ptrace_read_mem(#borrow(dst))`、`mb_ptrace_write_mem(#borrow(src))`、`mb_ptrace_read_maps(#borrow(dst))` | 独立属性行写在 fn 之前；MoonBit 保留所有权，C 侧不 decref |
-| 地址 / 长度 | `Address` = `UInt64`、`length : Int` | 调用方校验长度与缓冲容量；C 侧不做越界推断 |
+| 地址 / 长度 | `Address` = `UInt64`、`length : Int32` | 调用方校验长度与缓冲容量；C 侧不做越界推断 |
 
-shim 清单：`mb_ptrace_attach` / `mb_ptrace_detach` / `mb_ptrace_read_mem` / `mb_ptrace_write_mem` / `mb_ptrace_step` / `mb_ptrace_read_maps` / `mb_ptrace_task_count`。**无回调 shim**，故不需要 `FuncRef` / `#owned`。
+shim 清单：`mb_ptrace_attach` / `mb_ptrace_detach` / `mb_ptrace_read_mem` / `mb_ptrace_write_mem` / `mb_ptrace_step` / `mb_ptrace_read_maps` / `mb_ptrace_task_count`。**7 个均为包私有（私有实现 ABI，非公共 API）**，符号与签名不变、R2 对接无需改 ABI。**无回调 shim**，故不需要 `FuncRef` / `#owned`。
 
 ## 9. 可替换性与实现细节不泄漏
 
@@ -88,7 +88,7 @@ shim 清单：`mb_ptrace_attach` / `mb_ptrace_detach` / `mb_ptrace_read_mem` / `
 | 负例 | 未 attach 读写 → `NotAttached`；重复 attach → `AlreadyAttached`；不存在 pid → `ProcessNotFound`；重复 detach → `NotAttached` |
 | 集成（设备） | attach → maps → read → write → step → threads → detach；记录 errno 与 SELinux 拒绝信息 |
 | 平台 | x86-64 Linux 桌面先跑通；Android arm64 / armv7 记录权限差异 |
-| 门禁 | `moon fmt --check` / `moon check`（本轮不加 `--deny-warn`，ADR-0007） |
+| 门禁 | 四道门禁统一口径：`moon check --deny-warn` / `moon build` / `moon test` / `moon fmt --check`（另加 `moon clean`），冻结前 P0 实测全绿 |
 
 ## 11. 验收标准（实现轮）
 
@@ -100,7 +100,13 @@ E5（P1）W^X / SELinux / `ptrace_scope` 实测 · Q1（未解决）`mvp/` 与�
 
 ## 13. 当前状态与 TODO
 
-`ptrace_lite.mbt` 已写入 1 个 `#external` 句柄、7 个 shim 声明、值类型、状态机、错误模型、`MemoryView` trait 与 8 个 `declare` API，公开 API 有 `///` 文档注释与 `TODO(实现轮)`。**未实现任何系统调用、`/proc` 解析或反汇编**。
+`ptrace_lite.mbt` / `target.mbt` / `maps_parser.mbt` 已写入 1 个 `#external` 句柄、7 个**包私有** shim、
+值类型、状态机、错误模型、`MemoryView` trait 与全部 MoonBit 层 API 实现（含 `parse_maps` 纯解析、
+错误映射、缓冲容量校验）。**冻结前 P0（R2 准备轮）已落实**：决策 5（`Target.state` 私有字段 +
+只读访问器 `Target::state()`，字段级可见性可用故仅收紧该字段）、决策 6（7 个 shim 移出公开 API）、
+决策 7（追认 `pub impl MemoryView for Target`，冻结后新增 impl 即破坏性变更）、
+决策 8（detach 幂等措辞统一）。
+**仍无**真实 libc ptrace / `process_vm_*` 转发与设备实测（Linux/设备轮次，E5）。
 
 ## References
 

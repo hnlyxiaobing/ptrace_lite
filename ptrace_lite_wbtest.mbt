@@ -85,3 +85,37 @@ test "internal: parse_task_section" {
   })
   assert_true(e is PtraceError::ThreadEnumerateFailed(4242, _))
 }
+
+///|
+/// 内部：shim 容量校验（原黑盒 "capacity checks"，随 `mb_ptrace_*` 私有化
+/// 转白盒；冻结前 P0 决策 6）。shim 侧对 capacity / length 超限返回 -7；
+/// read_maps 为 snprintf 语义（截断写入 + 返回所需长度）。
+test "internal: shim capacity checks" {
+  let small : FixedArray[Byte] = FixedArray::make(4, b'\x00')
+  // capacity 超出 dst 容量 → -7
+  assert_eq(mb_ptrace_read_maps(4242, small, 100), -7)
+  // 截断写入 + 返回所需长度
+  let need = mb_ptrace_read_maps(4242, small, 4)
+  assert_true(need > 4)
+  let t = Target::attach(4242)
+  let dst : FixedArray[Byte] = FixedArray::make(4, b'\x00')
+  // length 超出 dst 容量 → -7
+  assert_eq(mb_ptrace_read_mem(t.handle, 0x10000UL, dst, 10), -7)
+  // length 超出 src 容量 → -7
+  assert_eq(mb_ptrace_write_mem(t.handle, 0x10000UL, b"XY", 10), -7)
+  // 零长度读合法
+  assert_eq(mb_ptrace_read_mem(t.handle, 0x10000UL, dst, 0), 0)
+  t.detach()
+}
+
+///|
+/// 内部：空句柄 / 失效句柄被 shim 拒绝（-8）（原黑盒 "stale handle rejected"
+/// 随 `mb_ptrace_*` 私有化转白盒；冻结前 P0 决策 6）。
+test "internal: stale handle rejected" {
+  let t = Target::attach(4242)
+  let h = t.handle
+  t.detach()
+  assert_eq(mb_ptrace_step(h), -8)
+  assert_eq(mb_ptrace_detach(h), -8)
+  assert_eq(mb_ptrace_task_count(4242), 2)
+}
