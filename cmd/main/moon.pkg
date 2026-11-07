@@ -1,0 +1,5 @@
+// import {
+//   "hnlyxiaobing/ptrace_lite" @lib,
+// }
+
+pkgtype(kind: "executable")
