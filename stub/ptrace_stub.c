@@ -4,7 +4,7 @@
  * ！！重要标注：本文件是「桌面 stub」实现，真实 libc 转发留待 Linux / 设备阶段。
  * 它用可移植 C 代码模拟 tracee 句柄、内存页与 /proc 文本，使
  * moon build / moon test 在 Windows + MSVC 主机上真实编译、链接、运行。
- * 语义与 API.md 一致；attach 的可失败路径通过模拟 pid 参数触发。
+ * 语义与 docs/API.md 一致；attach 的可失败路径通过模拟 pid 参数触发。
  *
  * 内部 shim 协议（与 MoonBit 侧 glue 共享，非公开 API）：
  *   - 返回值 0 或正数 = 成功（读写字节数 / 文本所需长度 / 线程数）。

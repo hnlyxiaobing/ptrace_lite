@@ -156,4 +156,4 @@ extern "C" fn mb_ptrace_task_count(pid : Int32) -> Int32 = "mb_ptrace_task_count
 ///|
 /// ---- MoonBit 侧公开 API ----
 /// `Target::{attach,maps,read_bytes,write_bytes,step,threads,detach}` 实现见 `target.mbt`；
-/// `parse_maps` 实现见 `maps_parser.mbt`。签名与文档契约见 `API.md`。
+/// `parse_maps` 实现见 `maps_parser.mbt`。签名与文档契约见 `docs/API.md`。

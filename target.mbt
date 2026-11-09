@@ -363,7 +363,7 @@ fn target_read_bytes(
 ///|
 /// 内部：写实现。分段口径同 `target_read_bytes`；`data` 为空为无操作。
 /// shim 侧对 `src` 容量二次校验（返回 -7）；真实路径下只读页返回 EFAULT/EPERM，
-/// 本层不做隐式 `mprotect`（见 `FORWARDING.md` 的 W^X 写入策略）。
+/// 本层不做隐式 `mprotect`（见 `docs/FORWARDING.md` 的 W^X 写入策略）。
 fn target_write_bytes(
   t : Target,
   address : Address,

@@ -1,6 +1,6 @@
 # ptrace_lite · 设计决策记录（DECISIONS.md）
 
-> 本文是本库设计决策的**自足记录**（每条按「背景 → 决策 → 理由 → 后果」展开），内容源自开发期决策记录并已全部内联，**不引用本仓库之外的任何文件**。配套文档：`README.md`（概览与验收）、`DESIGN.md`（设计契约）、`API.md`（公开接口）。
+> 本文是本库设计决策的**自足记录**（每条按「背景 → 决策 → 理由 → 后果」展开），内容源自开发期决策记录并已全部内联，**不引用本仓库之外的任何文件**。配套文档：`../README.md`（概览与验收）、`DESIGN.md`（设计契约）、`API.md`（公开接口）。
 
 ## 1. 轻量路线选型：只封装 libc ptrace / process_vm_* 与 /proc 解析
 
@@ -25,7 +25,7 @@
 
 ## 2. 零本地模块 import 与组合根二选一
 
-**背景**：本库处于「静态线索（apk / axml / dex）→ 动态验证」链路的动态侧，但各模块均为独立 MoonBit 模块（各自 `moon.mod`）。编译期互相 import 会造成循环依赖风险；`#external` 句柄跨模块传递会泄漏实现细节。
+**背景**：本库处于「静态线索（apk / axml / dex）→ 动态验证」链路的动态侧，但各模块均为独立 MoonBit 模块（各自 `../moon.mod`）。编译期互相 import 会造成循环依赖风险；`#external` 句柄跨模块传递会泄漏实现细节。
 
 **决策**：本库**不 import `pose` / `apk` / `axml` / `dex` / 任何本地模块**；`#external` 句柄（`TraceeRaw`）永不跨模块传递，只留在本模块内部。跨模块交互只经组合根传中性纯值（`Pid` / `Address` / `Bytes` / `MemoryRegion` 等）。与 `frida_gum_ffi` 的二选一由组合根决定，不新建公共模块、不新建公共抽象层。
 
@@ -45,9 +45,9 @@
 
 ## 4. `preferred_target` 由 wasm 改为 native
 
-**背景**：骨架的 `moon.mod` 默认 `preferred_target = "wasm"`。本机探针实测：在 wasm 目标下写 `extern "C" fn` 会被编译器以 `E4156`（`extern "C" is unsupported in wasm backend`）拒绝；而本库的全部价值就是外部 C ABI。
+**背景**：骨架的 `../moon.mod` 默认 `preferred_target = "wasm"`。本机探针实测：在 wasm 目标下写 `extern "C" fn` 会被编译器以 `E4156`（`extern "C" is unsupported in wasm backend`）拒绝；而本库的全部价值就是外部 C ABI。
 
-**决策**：`moon.mod` 的 `preferred_target` 由 `"wasm"` 改为 `"native"`（唯一配置改动，不改目录结构、不改 `moon.pkg` 其它字段）。
+**决策**：`../moon.mod` 的 `preferred_target` 由 `"wasm"` 改为 `"native"`（唯一配置改动，不改目录结构、不改 `../moon.pkg` 其它字段）。
 
 **理由**：wasm 后端无法表达 `extern "C"` 外部接口；native 目标下 `#external` / `extern "C"` / `#borrow` 声明可被真实编译器检查。
 
@@ -95,7 +95,7 @@ API 冻结前对公开面做了四项收紧/追认，其余公开方法签名零
 - **设备测试基线缺口**：真实 APK 测试资产不在本仓库，设备集成测试缺少基线样本（目标 App 许可不明，未入库）。
 - **多线程 attach 语义**：多线程 `PTRACE_ATTACH` 的逐线程停止语义、`/proc/<pid>/task` 在 attach 状态下的可读性，需设备实测。
 - **ARM64 单步指令边界**：需要反汇编支持，属明确非目标。
-- **真实 libc 转发**：当前 C shim 为项目内桌面 stub（`stub/ptrace_stub.c`）；真实 libc `ptrace` / `process_vm_*` / `waitpid` 转发与设备实测留待 Linux / 设备阶段。
+- **真实 libc 转发**：当前 C shim 为项目内桌面 stub（`../stub/ptrace_stub.c`）；真实 libc `ptrace` / `process_vm_*` / `waitpid` 转发与设备实测留待 Linux / 设备阶段。
 
 ## 9. 平台与集成约束
 
@@ -110,7 +110,7 @@ API 冻结前对公开面做了四项收紧/追认，其余公开方法签名零
 （`0 < n < length`），与公开 API「成功返回完整长度、否则报错」的契约冲突。
 本机 Windows 无法实测真实内核行为，但分段算法本身是纯逻辑，可在桌面验证。
 
-**决策**：新增包私有 `access_plan.mbt`：
+**决策**：新增包私有 `../access_plan.mbt`：
 
 1. 以 **4 KiB 保守粒度**把 `[address, address + length)` 拆成不跨页的段，
    记录每段 `{address, length, offset}`；4 KiB 是 16 KiB/64 KiB 页的子集，
@@ -136,7 +136,7 @@ vs errno `ENOENT`；`-3`/`-4`/`-5` 同样冲突）。若真实路径直接返回
 MoonBit 层无法区分「stub 合成码」与「真实 errno」，错误分类会串味。
 
 **决策**：新增真实通道 `status = -1000 - errno`（`<= -1001`；有效 errno 1..4095），
-由 `errno_map.mbt` 解码；`-1..-999` 仍属 stub 合成码。分类映射（节选）：
+由 `../errno_map.mbt` 解码；`-1..-999` 仍属 stub 合成码。分类映射（节选）：
 
 - `ESRCH`/`ENOENT`/`ECHILD` → `ProcessNotFound`（按上下文）；
 - `EPERM`/`EACCES` → `AttachDenied` / `ReadFailed` / `WriteFailed` / `StepFailed`

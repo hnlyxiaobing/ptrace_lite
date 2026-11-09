@@ -40,14 +40,14 @@
 #if defined(__linux__) && !defined(MB_PTRACE_FORCE_STUB)
   /* real: libc ptrace / process_vm_* / waitpid / /proc */
 #else
-  /* stub: stub/ptrace_stub.c 的模拟实现 */
+  /* stub: ../stub/ptrace_stub.c 的模拟实现 */
 #endif
 ```
 
 - 与 `tflite_ffi` 的「运行时动态加载真实 `.so`」不同：`ptrace` / `process_vm_*`
   是 **libc/内核系统调用**，没有可选的第三方 `.so`，编译期平台分支即可；
   `[仅据文档]` `process_vm_readv` 自 Linux 3.2 起在 libc 中提供。
-- `moon.pkg` 的 `"native-stub"` 列表、`moon.mod` 的 `preferred_target`
+- `../moon.pkg` 的 `"native-stub"` 列表、`../moon.mod` 的 `preferred_target`
   均不需要改动；真实实现应替换/新增 `native/` 下的 C 源文件，
   **不得**把任何第三方 `.so` 入库（本库本来也不依赖）。
 - 未知平台（macOS / wasm / 其他）一律落到 stub 分支并保持 fail-closed 语义，
@@ -57,12 +57,12 @@
 
 现有 stub 状态码（`-1..-8`）与 POSIX errno 冲突：`-2` 在 stub 是「无此进程」，
 在 errno 是 `ENOENT`；`-3`/`-4`/`-5` 同样冲突。因此真实路径**不得**直接返回
-`-errno`。设计如下（MoonBit 侧已实现 `errno_map.mbt`）：
+`-errno`。设计如下（MoonBit 侧已实现 `../errno_map.mbt`）：
 
 | 返回值 | 含义 | 生产者 |
 |---|---|---|
 | `0` / 正数 | 成功（字节数 / `/proc` 文本所需长度 / 线程数） | stub + real |
-| `-1 .. -999` | stub 合成码（legacy，语义见 `stub/ptrace_stub.c` 头注释） | stub |
+| `-1 .. -999` | stub 合成码（legacy，语义见 `../stub/ptrace_stub.c` 头注释） | stub |
 | `-1000 - errno`（`<= -1001`） | 真实 libc 路径的 POSIX errno | real |
 
 - 解码：`errno = -(status + 1000)`，有效范围 `1..4095`；越界视为非法通道值。
@@ -70,7 +70,7 @@
 - 真实路径的 errno 透传点是**设计结论**，尚未在 Linux/Android 编译运行
   `[仍需实测]`。
 - `[已复验-本地等价]` 白盒测试覆盖通道边界与全部映射分支
-  （`errno_map_wbtest.mbt`）。
+  （`../errno_map_wbtest.mbt`）。
 
 ### 1.3 errno → `PtraceError` 分类表（已实现）
 
@@ -232,7 +232,7 @@ group-stop 下 detach 的行为、部分线程已退出时的返回值取舍。
 
 ### 3.1 算法
 
-`access_plan.mbt` 的 `plan_access(kind, address, length, page_size)`：
+`../access_plan.mbt` 的 `plan_access(kind, address, length, page_size)`：
 
 - 从 `address` 起，每次取 `min(页尾距离, 剩余长度)` 作为一段；
 - 段记录 `{address, length, offset}`，`offset` 是段在请求内的偏移；
@@ -280,7 +280,7 @@ group-stop 下 detach 的行为、部分线程已退出时的返回值取舍。
 - C shim 可以返回 `0 < n < length`（真实内核的部分读写）；MoonBit 层
   显式识别为 `partial read/write at segment ...` 并报错，绝不静默截断。
 - 若未来需要「尽力读」语义，应新增独立 API，而不是改变现有契约
-  （API 冻结语义见工作区 `COMPATIBILITY.md` §10）。
+  （API 冻结语义见工作区 `../../COMPATIBILITY.md` §10）。
 
 ---
 
@@ -518,4 +518,4 @@ process_vm_* 调用
 - `proc(5)`（`/proc/<pid>/maps`、`task`）：<https://man7.org/linux/man-pages/man5/proc.5.html>
 - Yama LSM：<https://www.kernel.org/doc/html/latest/admin-guide/LSM/Yama.html>
 - 本仓库：`DESIGN.md`（设计契约）· `API.md`（公开接口）· `DECISIONS.md`（决策记录）·
-  `access_plan.mbt` / `errno_map.mbt`（本轮纯逻辑实现）· `stub/ptrace_stub.c`（桌面 stub）
+  `../access_plan.mbt` / `../errno_map.mbt`（本轮纯逻辑实现）· `../stub/ptrace_stub.c`（桌面 stub）

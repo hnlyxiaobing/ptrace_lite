@@ -2,7 +2,7 @@
 
 > **API 冻结前整改后**。`preferred_target = "native"`，错误传播统一 `raise PtraceError`。
 > MoonBit 侧 API **全部已实现**（桌面 C stub 双路径），无 `declare` 残留、无 `0068` 告警。
-> 快照 `pkg.generated.mbti` 已由工具链（`rr_moon_pkg`）在 `moon check` / `moon build` 时**自动同步**为
+> 快照 `../pkg.generated.mbti` 已由工具链（`rr_moon_pkg`）在 `moon check` / `moon build` 时**自动同步**为
 > 本轮整改后公开面（7 个 `mb_ptrace_*` shim 消失、`Target.state` 私有 + 新增 `Target::state()` 等）；
 > 维护时以 `moon info` 复核为准。
 > 与 `frida_gum_ffi` 互斥备选，两库零互相 import（见 `DECISIONS.md`「零本地模块 import 与组合根二选一」）。
@@ -19,7 +19,7 @@
 > 实现与内部调用（`Target::{attach,maps,read_bytes,write_bytes,step,threads,detach}`）全部保留，
 > 符号名与签名不变，真实 libc 对接无需改 ABI。
 > 黑盒测试不直接调用 shim；直接调用的白盒用例（capacity `-7`、stale handle `-8`）
-> 已转 `ptrace_lite_wbtest.mbt`（**测试总数不变：18**）。
+> 已转 `../ptrace_lite_wbtest.mbt`（**测试总数不变：18**）。
 > 下表仅作**内部 ABI 文档**，不构成公共 API 承诺。
 
 | shim（包私有） | 所有权 | 语义 |
@@ -35,14 +35,14 @@
 > `#borrow` / `#owned` 是**写在 fn 声明之前的独立属性行**，不是参数注解。本模块无回调，因此不需要 `FuncRef` 与 `#owned` 闭包。
 >
 > **真实转发层状态通道（R4 设计）**：真实 libc 路径返回 `-1000 - errno`（`<= -1001`），
-> 与 stub 合成码 `-1..-8` 并存、互不冲突；分类映射见 `errno_map.mbt` 与 `FORWARDING.md` §1.2。
+> 与 stub 合成码 `-1..-8` 并存、互不冲突；分类映射见 `../errno_map.mbt` 与 `FORWARDING.md` §1.2。
 > 7 个符号/签名不变，仍为包私有 ABI；真实路径 **`[仍需实测]`**。
 
 ## 值类型 / 错误 / 契约
 
 | 类型 | 种类 | 说明 |
 |---|---|---|
-| `Pid` / `Address` | `pub type` | `Int32` / `UInt64` 别名（与 `pkg.generated.mbti` 一致） |
+| `Pid` / `Address` | `pub type` | `Int32` / `UInt64` 别名（与 `../pkg.generated.mbti` 一致） |
 | `MemoryProtection` | `pub(all) struct` | read / write / execute / private |
 | `MemoryRegion` | `pub(all) struct` | start / end / protection / offset / device / inode / `path : String?` |
 | `ThreadInfo` | `pub(all) struct` | tid / name / state |
@@ -71,8 +71,8 @@
 
 ## API 冻结前追认记录
 
-- **`pub impl MemoryView for Target`**（`read_bytes` / `write_bytes`，实现见 `target.mbt`）：
-  早期 API 快照 `pkg.generated.mbti` 已含该 impl（`pub impl MemoryView for Target`），
+- **`pub impl MemoryView for Target`**（`read_bytes` / `write_bytes`，实现见 `../target.mbt`）：
+  早期 API 快照 `../pkg.generated.mbti` 已含该 impl（`pub impl MemoryView for Target`），
   **API 冻结前正式追认**——`MemoryView for Target` 属公开面，**冻结后新增 impl 即破坏性变更**。
 - 本轮对 `Target` 的字段级收紧（`state` → `priv` + `Target::state()`）与
   7 个 shim 私有化属允许的「私有化」类变化；其余公开方法签名零变化。
@@ -85,9 +85,9 @@
 
 **R4 桌面可验证增量实跑（2026-11-09）**：`moon check --deny-warn` / `moon build` /
 `moon test`（**49/49**：18 基线 + 31 新增）/ `moon fmt --check` 全绿；公开 API 面
-**零变化**（新增 `access_plan.mbt` / `errno_map.mbt` 均为包私有，`moon info` 后
-`pkg.generated.mbti` 与 `cmd/main/pkg.generated.mbti` diff=0）；
+**零变化**（新增 `../access_plan.mbt` / `../errno_map.mbt` 均为包私有，`moon info` 后
+`../pkg.generated.mbti` 与 `../cmd/main/pkg.generated.mbti` diff=0）；
 `parse_maps` 纯测与分段/errno/CLI 白盒测试可在桌面 CI 跑；
 真实 libc ptrace / `process_vm_*` 转发与 attach 相关设备实测留待 **Linux / 设备阶段**
 （E5；风险与待验证见 `DECISIONS.md`，方案见 `FORWARDING.md`，均标 `[仍需实测]`）。
-API 快照：`pkg.generated.mbti`（由工具链 `rr_moon_pkg` 自动同步，维护时以 `moon info` 复核为准）。
+API 快照：`../pkg.generated.mbti`（由工具链 `rr_moon_pkg` 自动同步，维护时以 `moon info` 复核为准）。

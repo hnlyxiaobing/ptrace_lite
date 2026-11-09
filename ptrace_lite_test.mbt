@@ -2,7 +2,7 @@
 // 桌面 stub 注：走 stub/ptrace_stub.c 的模拟 tracee（pid 4242 正常、7001 SELinux、
 // 7002 内核不支持、7003 权限拒绝、其余不存在）；真实 libc 转发留待 Linux / 设备阶段。
 //
-// API 冻结前收紧（见 DECISIONS.md）：`Target.state` 为私有字段，黑盒经只读访问器
+// API 冻结前收紧（见 docs/DECISIONS.md）：`Target.state` 为私有字段，黑盒经只读访问器
 // `Target::state()` 读取；7 个 `mb_ptrace_*` shim 已移出公开 API，
 // 直接调用 shim 的用例（capacity -7、stale handle -8）转白盒
 // `ptrace_lite_wbtest.mbt`，黑盒保留等价的 MoonBit 层语义断言。
@@ -55,7 +55,7 @@ test "full chain: attach->maps->read->write->step->threads->detach" {
   t.write_bytes(0x10010UL, b"XY")
   let back = t.read_bytes(0x10010UL, 2)
   assert_eq(back, b"XY")
-  // step：state 进入 Stepping（API.md 语义：仅未 attach 拒绝读写）
+  // step：state 进入 Stepping（docs/API.md 语义：仅未 attach 拒绝读写）
   t.step()
   assert_true(t.state() is @ptrace_lite.TargetState::Stepping)
   let after_step = t.read_bytes(0x10000UL, 1)

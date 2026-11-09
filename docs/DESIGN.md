@@ -106,7 +106,7 @@ shim 清单：`mb_ptrace_attach` / `mb_ptrace_detach` / `mb_ptrace_read_mem` / `
 
 ## 13. 当前状态与 TODO
 
-`ptrace_lite.mbt` / `target.mbt` / `maps_parser.mbt` 已写入 1 个 `#external` 句柄、7 个**包私有** shim、
+`../ptrace_lite.mbt` / `../target.mbt` / `../maps_parser.mbt` 已写入 1 个 `#external` 句柄、7 个**包私有** shim、
 值类型、状态机、错误模型、`MemoryView` trait 与全部 MoonBit 层 API 实现（含 `parse_maps` 纯解析、
 错误映射、缓冲容量校验）。**API 冻结前整改已落实**（四项收紧的完整记录见 `DECISIONS.md`）：
 `Target.state` 私有字段 + 只读访问器 `Target::state()`（字段级可见性可用故仅收紧该字段）、
@@ -116,15 +116,15 @@ detach 幂等措辞统一。
 
 ### 13.1 R4 增量（2026-11-09，仅桌面可验证部分）
 
-- **`access_plan.mbt`（新增，包私有）**：跨页访问分段计划。保守 4 KiB 粒度、
+- **`../access_plan.mbt`（新增，包私有）**：跨页访问分段计划。保守 4 KiB 粒度、
   段数上限 fail-closed、按方向映射 `ReadFailed`/`WriteFailed`；
   `Target::read_bytes` / `write_bytes` 已接入逐段调用，任一段失败即整体失败
   （不静默截断），错误携带失败段地址/长度/序号。
-- **`errno_map.mbt`（新增，包私有）**：真实转发层 errno 分类映射
+- **`../errno_map.mbt`（新增，包私有）**：真实转发层 errno 分类映射
   （`ESRCH`/`EPERM`/`EACCES`/`EFAULT`/`EIO`/`EINVAL`/`ENOSYS`/`EINTR`/`EBUSY`/`ECHILD`
   → 12 个 `PtraceError` 构造），定义 `-1000 - errno` 真实状态通道，
   与 stub 合成码 `-1..-8` 隔离；`SelinuxDenied` 仍只由 stub `-4`/显式探测产生。
-- **stub fail-closed 修复**：`stub/ptrace_stub.c` 的句柄槽在 detach 后被复用，
+- **stub fail-closed 修复**：`../stub/ptrace_stub.c` 的句柄槽在 detach 后被复用，
   修复「同一进程内第 9 次 attach 假性失败」；stub 仍只模拟 pid 4242，
   未知 pid / 非法地址 / 只读页写入一律显式错误。
 - **CLI 骨架**：`cmd/main` 落地 `attach` / `maps` / `read` / `write` / `step`
@@ -138,4 +138,4 @@ detach 幂等措辞统一。
 
 ## References
 
-本仓库内文档：`FORWARDING.md`（真实转发层设计，逐条 `[仍需实测]`）· `DECISIONS.md`（设计决策记录：轻量选型、无回调设计、native 目标、`parse_maps` 纯函数、`MemoryView` 可替换性、API 冻结前收紧、分段计划与 errno 通道、CLI 退出码、风险与待验证、平台与集成约束）· `API.md` · `README.md` · `README.mbt.md`
+本仓库内文档：`FORWARDING.md`（真实转发层设计，逐条 `[仍需实测]`）· `DECISIONS.md`（设计决策记录：轻量选型、无回调设计、native 目标、`parse_maps` 纯函数、`MemoryView` 可替换性、API 冻结前收紧、分段计划与 errno 通道、CLI 退出码、风险与待验证、平台与集成约束）· `API.md` · `../README.md` · `../README.mbt.md`
