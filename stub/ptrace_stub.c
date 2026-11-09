@@ -23,6 +23,8 @@
  *
  * 模拟 pid 约定（stub 特有，测试用参数触发各失败路径）：
  *   4242  正常可 attach 的 tracee（2 线程、4 个模拟内存区）
+ *   4243  正常可 attach 的多页 tracee（1 线程、1 个三页区 0x40000-0x43000，
+ *         用于端到端验证跨页分段拼接；与 4242 的 fixture 互不影响）
  *   7001  存在但 SELinux 拒绝
  *   7002  存在但内核不支持
  *   7003  存在但 ptrace/proc 权限拒绝
@@ -55,6 +57,7 @@
 
 /* ---- 模拟 pid ---- */
 #define SIM_PID 4242
+#define SIM_MULTIPAGE_PID 4243
 #define SIM_SELINUX_PID 7001
 #define SIM_KERNEL_PID 7002
 #define SIM_DENIED_PID 7003
@@ -76,8 +79,12 @@ static uint8_t sim_heap[0x1000];
 static uint8_t sim_code[0x100];
 static uint8_t sim_res[0x1000];
 static uint8_t sim_stack[0x1000];
+/* 多页 fixture：3 页（0x40000-0x43000），用于端到端验证跨页分段拼接。
+ * 与 SIM_PID 的 4 个单页区互不影响（4242 的 maps/测试保持原样）。 */
+static uint8_t sim_big[0x3000];
 
 static sim_region sim_regions[4];
+static sim_region sim_big_regions[1];
 static int sim_ready = 0;
 
 static void sim_init(void) {
@@ -89,6 +96,8 @@ static void sim_init(void) {
   memset(sim_res, 0, sizeof(sim_res));
   for (size_t i = 0; i < sizeof(sim_stack); i++)
     sim_stack[i] = (uint8_t)(255 - (i & 0xff));
+  for (size_t i = 0; i < sizeof(sim_big); i++)
+    sim_big[i] = (uint8_t)(0xA0 + (i % 16));
   sim_regions[0].start = 0x10000;
   sim_regions[0].end = 0x11000;
   sim_regions[0].perms = PERM_R | PERM_W | PERM_P;
@@ -105,7 +114,22 @@ static void sim_init(void) {
   sim_regions[3].end = 0x7ffd4a5b1000ULL;
   sim_regions[3].perms = PERM_R | PERM_W | PERM_P;
   sim_regions[3].data = sim_stack;
+  sim_big_regions[0].start = 0x40000;
+  sim_big_regions[0].end = 0x43000;
+  sim_big_regions[0].perms = PERM_R | PERM_W | PERM_P;
+  sim_big_regions[0].data = sim_big;
   sim_ready = 1;
+}
+
+/* 按 pid 选择模拟内存区集合（4242 = 4 个单页区；4243 = 1 个三页区）。 */
+static int sim_regions_for(int32_t pid, sim_region **out) {
+  sim_init();
+  if (pid == SIM_MULTIPAGE_PID) {
+    *out = sim_big_regions;
+    return 1;
+  }
+  *out = sim_regions;
+  return 4;
 }
 
 /* ---- 句柄表 ---- */
@@ -147,11 +171,21 @@ static const char sim_task_text[] =
     "4242\tsim-tracee\tS\n"
     "4250\tsim-worker\tS\n";
 
+/* 多页 fixture 的 maps / task 文本（pid 4243）。 */
+static const char sim_maps_text_big[] =
+    "00040000-00043000 rw-p 00000000 00:00 0 [sim-big]\n";
+
+static const char sim_task_text_big[] =
+    "__tasks__\n"
+    "4243\tsim-big\tS\n";
+
 /* pid 存在性/可访问性；不可访问时返回负状态码 */
 static int32_t sim_pid_status(int32_t pid) {
   sim_init();
   switch (pid) {
   case SIM_PID:
+    return MB_OK;
+  case SIM_MULTIPAGE_PID:
     return MB_OK;
   case SIM_SELINUX_PID:
     return MB_ERR_SELINUX;
@@ -170,6 +204,16 @@ void *mb_ptrace_attach(int32_t pid) {
   sim_init();
   if (sim_pid_status(pid) != MB_OK) return NULL;
   if (sim_is_attached(pid)) return NULL; /* 已被本 tracer attach */
+  /* 优先复用已 detach 的死槽：句柄表是有限资源，反复 attach/detach 不得
+   * 耗尽槽位（否则同一进程内第 9 次 attach 会假性失败为 AttachDenied）。
+   * 死槽保留原指针，使 stale handle 仍能被 handle_lookup 判为失效。 */
+  for (int i = 0; i < MAX_HANDLES; i++) {
+    if (g_handles[i] != NULL && !g_handles[i]->alive) {
+      g_handles[i]->pid = pid;
+      g_handles[i]->alive = 1;
+      return (void *)g_handles[i];
+    }
+  }
   for (int i = 0; i < MAX_HANDLES; i++) {
     if (g_handles[i] == NULL) {
       sim_tracee *t = (sim_tracee *)malloc(sizeof(sim_tracee));
@@ -200,9 +244,10 @@ int32_t mb_ptrace_read_mem(void *handle, uint64_t address, uint8_t *dst,
     return MB_ERR_INVAL; /* 容量不足 */
   uint64_t end_addr = address + (uint64_t)length;
   if (end_addr < address) return MB_ERR_INVAL; /* 地址溢出 */
-  sim_init();
-  for (int i = 0; i < 4; i++) {
-    sim_region *r = &sim_regions[i];
+  sim_region *regions = NULL;
+  int region_count = sim_regions_for(t->pid, &regions);
+  for (int i = 0; i < region_count; i++) {
+    sim_region *r = &regions[i];
     if (r->start <= address && end_addr <= r->end) {
       memcpy(dst, r->data + (size_t)(address - r->start), (size_t)length);
       return length;
@@ -221,9 +266,10 @@ int32_t mb_ptrace_write_mem(void *handle, uint64_t address, uint8_t *src,
     return MB_ERR_INVAL; /* 容量不足 */
   uint64_t end_addr = address + (uint64_t)length;
   if (end_addr < address) return MB_ERR_INVAL; /* 地址溢出 */
-  sim_init();
-  for (int i = 0; i < 4; i++) {
-    sim_region *r = &sim_regions[i];
+  sim_region *regions = NULL;
+  int region_count = sim_regions_for(t->pid, &regions);
+  for (int i = 0; i < region_count; i++) {
+    sim_region *r = &regions[i];
     if (r->start <= address && end_addr <= r->end) {
       if ((r->perms & PERM_W) == 0) return MB_ERR_INVAL; /* 页不可写（W^X） */
       memcpy(r->data + (size_t)(address - r->start), src, (size_t)length);
@@ -247,6 +293,14 @@ int32_t mb_ptrace_read_maps(int32_t pid, uint8_t *dst, int32_t capacity) {
 
   size_t maps_len = strlen(sim_maps_text);
   size_t task_len = strlen(sim_task_text);
+  const char *maps_text = sim_maps_text;
+  const char *task_text = sim_task_text;
+  if (pid == SIM_MULTIPAGE_PID) {
+    maps_text = sim_maps_text_big;
+    task_text = sim_task_text_big;
+    maps_len = strlen(maps_text);
+    task_len = strlen(task_text);
+  }
   int32_t required = (int32_t)(maps_len + task_len);
 
   if (capacity == 0) {
@@ -262,13 +316,13 @@ int32_t mb_ptrace_read_maps(int32_t pid, uint8_t *dst, int32_t capacity) {
   if (written < (size_t)to_write) {
     size_t n = maps_len < (size_t)to_write - written ? maps_len
                                                      : (size_t)to_write - written;
-    memcpy(dst + written, sim_maps_text, n);
+    memcpy(dst + written, maps_text, n);
     written += n;
   }
   if (written < (size_t)to_write) {
     size_t n = task_len < (size_t)to_write - written ? task_len
                                                      : (size_t)to_write - written;
-    memcpy(dst + written, sim_task_text, n);
+    memcpy(dst + written, task_text, n);
     written += n;
   }
   return required; /* snprintf 语义：返回所需长度 */
@@ -278,5 +332,6 @@ int32_t mb_ptrace_task_count(int32_t pid) {
   sim_init();
   int32_t status = sim_pid_status(pid);
   if (status != MB_OK) return status;
+  if (pid == SIM_MULTIPAGE_PID) return 1; /* sim-big 主线程 */
   return 2; /* sim-tracee 主线程 + sim-worker */
 }

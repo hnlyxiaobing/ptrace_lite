@@ -13,47 +13,57 @@
 
 ///|
 /// 内部：进程级错误映射（attach 就绪性探测与 /proc 读取共用）。
+/// 先走真实 errno 通道（`<= -1001`），再兼容 stub 合成码。
 fn map_proc_status(pid : Pid, code : Int32, context : String) -> PtraceError {
-  if code == -2 {
-    PtraceError::ProcessNotFound(pid)
-  } else if code == -3 {
-    PtraceError::AttachDenied(
-      pid,
-      "\{context}: permission denied (status \{code})",
-    )
-  } else if code == -4 {
-    PtraceError::SelinuxDenied(
-      "\{context}: SELinux denied (pid \{pid}, status \{code})",
-    )
-  } else if code == -5 {
-    PtraceError::UnsupportedKernel(
-      "\{context}: unsupported kernel (pid \{pid}, status \{code})",
-    )
-  } else if code == -6 {
-    PtraceError::AlreadyAttached(pid)
-  } else {
-    PtraceError::AttachDenied(pid, "\{context}: failed (status \{code})")
+  match errno_from_status(code) {
+    Some(errno) => classify_errno(SyscallOp::ProcText, errno, pid, context)
+    None =>
+      if code == -2 {
+        PtraceError::ProcessNotFound(pid)
+      } else if code == -3 {
+        PtraceError::AttachDenied(
+          pid,
+          "\{context}: permission denied (status \{code})",
+        )
+      } else if code == -4 {
+        PtraceError::SelinuxDenied(
+          "\{context}: SELinux denied (pid \{pid}, status \{code})",
+        )
+      } else if code == -5 {
+        PtraceError::UnsupportedKernel(
+          "\{context}: unsupported kernel (pid \{pid}, status \{code})",
+        )
+      } else if code == -6 {
+        PtraceError::AlreadyAttached(pid)
+      } else {
+        PtraceError::AttachDenied(pid, "\{context}: failed (status \{code})")
+      }
   }
 }
 
 ///|
-/// 内部：线程枚举的错误映射。
+/// 内部：线程枚举的错误映射（同样先走真实 errno 通道）。
 fn map_thread_status(pid : Pid, code : Int32) -> PtraceError {
-  if code == -2 {
-    PtraceError::ProcessNotFound(pid)
-  } else if code == -4 {
-    PtraceError::SelinuxDenied(
-      "thread enumerate: SELinux denied (pid \{pid}, status \{code})",
-    )
-  } else if code == -5 {
-    PtraceError::UnsupportedKernel(
-      "thread enumerate: unsupported kernel (pid \{pid}, status \{code})",
-    )
-  } else {
-    PtraceError::ThreadEnumerateFailed(
-      pid,
-      "thread enumerate failed (status \{code})",
-    )
+  match errno_from_status(code) {
+    Some(errno) =>
+      classify_errno(SyscallOp::ThreadEnum, errno, pid, "thread enumerate")
+    None =>
+      if code == -2 {
+        PtraceError::ProcessNotFound(pid)
+      } else if code == -4 {
+        PtraceError::SelinuxDenied(
+          "thread enumerate: SELinux denied (pid \{pid}, status \{code})",
+        )
+      } else if code == -5 {
+        PtraceError::UnsupportedKernel(
+          "thread enumerate: unsupported kernel (pid \{pid}, status \{code})",
+        )
+      } else {
+        PtraceError::ThreadEnumerateFailed(
+          pid,
+          "thread enumerate failed (status \{code})",
+        )
+      }
   }
 }
 
@@ -216,8 +226,9 @@ pub fn Target::attach(pid : Pid) -> Target raise PtraceError {
   // 2) 获取 C 侧句柄；失败时返回空句柄且不持有资源。
   let handle = mb_ptrace_attach(pid)
   // 3) 句柄有效性探测：零长度读无副作用；空句柄返回 -8。
-  if mb_ptrace_read_mem(handle, 0, empty, 0) < 0 {
-    raise PtraceError::AttachDenied(pid, "attach failed: empty handle")
+  let handle_probe = mb_ptrace_read_mem(handle, 0, empty, 0)
+  if handle_probe < 0 {
+    raise attach_error_from_status(pid, handle_probe, "attach handle probe")
   }
   Target::{ pid, handle, state: TargetState::Attached, }
 }
@@ -260,10 +271,7 @@ pub fn Target::step(self : Target) -> Unit raise PtraceError {
   self.ensure_open()
   let r = mb_ptrace_step(self.handle)
   if r < 0 {
-    if r == -8 {
-      raise PtraceError::NotAttached(self.pid)
-    }
-    raise PtraceError::StepFailed(self.pid, "step failed (status \{r})")
+    raise step_error_from_status(self.pid, r, "step")
   }
   self.state = TargetState::Stepping
 }
@@ -303,7 +311,7 @@ pub fn Target::detach(self : Target) -> Unit raise PtraceError {
   let r = mb_ptrace_detach(self.handle)
   if r < 0 {
     self.state = TargetState::Failed
-    raise PtraceError::DetachFailed(self.pid, "detach failed (status \{r})")
+    raise detach_error_from_status(self.pid, r, "detach")
   }
   self.state = TargetState::Detached
 }
@@ -312,44 +320,50 @@ pub fn Target::detach(self : Target) -> Unit raise PtraceError {
 /// ---- 内部：读写实现（公开方法与 `MemoryView` 共用）----
 
 ///|
-/// 内部：读实现。容量校验：`length` 与地址区间在调用 shim 前校验，
-/// shim 侧对 `dst` 容量二次校验（返回 -7）。
+/// 内部：读实现。先把请求按保守 4 KiB 边界拆成不跨页分段（`plan_access`），
+/// 再逐段调用 shim；任一段失败即整体失败（不静默截断），错误携带失败段的
+/// 地址/长度与段序号。`length == 0` 返回空 `Bytes`（合法无操作）。
 fn target_read_bytes(
   t : Target,
   address : Address,
   length : Int32,
 ) -> Bytes raise PtraceError {
   t.ensure_open()
-  if length < 0 {
-    raise PtraceError::ReadFailed(address, length, "negative length")
-  }
+  let plan = plan_access(AccessKind::Read, address, length, ACCESS_GRANULARITY)
   if length == 0 {
     return b""
   }
-  let end = address + length.to_uint64()
-  if end < address {
-    raise PtraceError::ReadFailed(address, length, "address overflow")
-  }
+  let segments = plan.segments
   let dst : FixedArray[Byte] = FixedArray::make(length, b'\x00')
-  let r = mb_ptrace_read_mem(t.handle, address, dst, length)
-  if r < 0 {
-    if r == -8 {
-      raise PtraceError::NotAttached(t.pid)
+  for i in 0..<segments.length() {
+    let seg = segments[i]
+    let tmp : FixedArray[Byte] = FixedArray::make(seg.length, b'\x00')
+    let r = mb_ptrace_read_mem(t.handle, seg.address, tmp, seg.length)
+    if r < 0 {
+      raise read_error_from_status(
+        t.pid,
+        seg.address,
+        seg.length,
+        r,
+        "read segment \{i + 1}/\{segments.length()}",
+      )
     }
-    raise PtraceError::ReadFailed(address, length, "read failed (status \{r})")
+    if r != seg.length {
+      raise PtraceError::ReadFailed(
+        seg.address,
+        seg.length,
+        "partial read at segment \{i + 1}/\{segments.length()} (\{r} of \{seg.length} bytes)",
+      )
+    }
+    dst.blit_from_bytes(seg.offset, Bytes::from_array(tmp), 0, seg.length)
   }
-  if r != length {
-    raise PtraceError::ReadFailed(
-      address,
-      length,
-      "partial read (\{r} of \{length} bytes)",
-    )
-  }
-  Bytes::from_array(dst[0:length])
+  Bytes::from_array(dst)
 }
 
 ///|
-/// 内部：写实现。容量校验：长度以 `data` 为准，shim 侧对 `src` 容量二次校验（返回 -7）。
+/// 内部：写实现。分段口径同 `target_read_bytes`；`data` 为空为无操作。
+/// shim 侧对 `src` 容量二次校验（返回 -7）；真实路径下只读页返回 EFAULT/EPERM，
+/// 本层不做隐式 `mprotect`（见 `FORWARDING.md` 的 W^X 写入策略）。
 fn target_write_bytes(
   t : Target,
   address : Address,
@@ -357,30 +371,31 @@ fn target_write_bytes(
 ) -> Unit raise PtraceError {
   t.ensure_open()
   let length = data.length()
+  let plan = plan_access(AccessKind::Write, address, length, ACCESS_GRANULARITY)
   if length == 0 {
     return ()
   }
-  let end = address + length.to_uint64()
-  if end < address {
-    raise PtraceError::WriteFailed(address, length, "address overflow")
-  }
-  let r = mb_ptrace_write_mem(t.handle, address, data, length)
-  if r < 0 {
-    if r == -8 {
-      raise PtraceError::NotAttached(t.pid)
+  let segments = plan.segments
+  for i in 0..<segments.length() {
+    let seg = segments[i]
+    let chunk = data[seg.offset:seg.offset + seg.length].to_owned()
+    let r = mb_ptrace_write_mem(t.handle, seg.address, chunk, seg.length)
+    if r < 0 {
+      raise write_error_from_status(
+        t.pid,
+        seg.address,
+        seg.length,
+        r,
+        "write segment \{i + 1}/\{segments.length()}",
+      )
     }
-    raise PtraceError::WriteFailed(
-      address,
-      length,
-      "write failed (status \{r})",
-    )
-  }
-  if r != length {
-    raise PtraceError::WriteFailed(
-      address,
-      length,
-      "partial write (\{r} of \{length} bytes)",
-    )
+    if r != seg.length {
+      raise PtraceError::WriteFailed(
+        seg.address,
+        seg.length,
+        "partial write at segment \{i + 1}/\{segments.length()} (\{r} of \{seg.length} bytes)",
+      )
+    }
   }
 }
 
