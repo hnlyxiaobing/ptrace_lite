@@ -101,4 +101,77 @@ API 冻结前对公开面做了四项收紧/追认，其余公开方法签名零
 
 - `preferred_target = "native"`；仅 Linux / Android；Windows 主机不可运行（无 ptrace，MSVC native 亦无 ptrace）。
 - **native 后端无法把 `foreign_library` 导出为可链接 `.so`，设备侧需「C stub + 宿主 NDK/CMake」路径**：MoonBit 产物以 C 源码 / 对象形式进入宿主 NDK/CMake 工程链接，不存在「导出 .so 给宿主链接」的形态。
-- 错误传播统一 `raise PtraceError`（12 个可判定错误构造）；C 侧状态码约定：`-1` 通用失败、`-2` 无此进程、`-3` 权限拒绝、`-4` SELinux 拒绝、`-5` 内核不支持、`-6` 已被本 tracer attach、`-7` 参数/地址非法、`-8` 句柄为空或已失效。
+- 错误传播统一 `raise PtraceError`（12 个可判定错误构造）；C 侧状态码约定：`-1` 通用失败、`-2` 无此进程、`-3` 权限拒绝、`-4` SELinux 拒绝、`-5` 内核不支持、`-6` 已被本 tracer attach、`-7` 参数/地址非法、`-8` 句柄为空或已失效。真实转发层新增 `-1000 - errno` 通道（见本文第 11 节），与上述合成码隔离。
+
+## 10. 跨页访问分段计划（4 KiB 保守粒度、全有或全无）
+
+**背景**：真实 `process_vm_readv` / `process_vm_writev` 允许单个 iovec 跨页，但
+跨到未映射/不可读页时只返回 `EFAULT`，无法定位坏页；同时内核可能返回部分读写
+（`0 < n < length`），与公开 API「成功返回完整长度、否则报错」的契约冲突。
+本机 Windows 无法实测真实内核行为，但分段算法本身是纯逻辑，可在桌面验证。
+
+**决策**：新增包私有 `access_plan.mbt`：
+
+1. 以 **4 KiB 保守粒度**把 `[address, address + length)` 拆成不跨页的段，
+   记录每段 `{address, length, offset}`；4 KiB 是 16 KiB/64 KiB 页的子集，
+   永远不会跨真实页（只多 syscall）。
+2. 段数上限 `65536`（≈256 MiB，4 KiB 粒度）fail-closed，超限报错而非截断。
+3. `length < 0` / `page_size <= 0` / `address + length` 溢出 → 按方向映射
+   `ReadFailed` / `WriteFailed`；零长度返回空计划（合法无操作）。
+4. `Target::read_bytes` / `write_bytes` 逐段调用 shim；任一段失败立即
+   `raise`，**不返回部分结果**；错误携带失败段地址/长度与段序号。
+5. 真实页大小设备轮由 C shim `sysconf(_SC_PAGESIZE)` 校准（可选，4 KiB 始终正确）。
+
+**理由**：纯逻辑可桌面测试；分段把 `EFAULT` 定位到页/段；全有或全无契约不因
+真实内核的部分读写而改变；上限防止畸形大请求放大内存。
+
+**后果**：正面——错误可定位、可测试、无需真实 libc；负面——多页请求的 syscall
+次数增加（每页/每段一次），设备轮需评估性能；真实页大小与部分读写行为
+`[仍需实测]`。
+
+## 11. 真实 errno 通道与分类映射（`-1000 - errno`）
+
+**背景**：stub 合成码 `-1..-8` 与 POSIX errno 数值冲突（`-2`：stub「无此进程」
+vs errno `ENOENT`；`-3`/`-4`/`-5` 同样冲突）。若真实路径直接返回 `-errno`，
+MoonBit 层无法区分「stub 合成码」与「真实 errno」，错误分类会串味。
+
+**决策**：新增真实通道 `status = -1000 - errno`（`<= -1001`；有效 errno 1..4095），
+由 `errno_map.mbt` 解码；`-1..-999` 仍属 stub 合成码。分类映射（节选）：
+
+- `ESRCH`/`ENOENT`/`ECHILD` → `ProcessNotFound`（按上下文）；
+- `EPERM`/`EACCES` → `AttachDenied` / `ReadFailed` / `WriteFailed` / `StepFailed`
+  / `ThreadEnumerateFailed`（消息列出 `ptrace_scope`、SELinux、W^X 候选）；
+- `EFAULT` → `ReadFailed`/`WriteFailed`（bad address，带失败段）；
+- `EIO` → 方向错误 / `/proc` 与线程枚举的 `UnsupportedKernel`；
+- `EINVAL` → 方向错误 / `AttachDenied`；
+- `ENOSYS` → `UnsupportedKernel`（`process_vm_*`/`ptrace` 缺失）；
+- `EINTR` → 显式错误（真实 shim 应重试，不得静默吞掉）；
+- `EBUSY` → `AlreadyAttached`；未知 errno → 方向错误并带 errno。
+
+**理由**：通道隔离使 stub 18 项基线零改动、真实路径可细粒度分类；
+`SelinuxDenied` 不凭 errno 猜测（保留给 stub `-4`/显式探测），避免误导。
+
+**后果**：正面——错误模型可扩展、测试可纯逻辑覆盖；负面——真实 shim 必须
+正确编码 errno，且 `EPERM` 的三种成因仍无法自动区分；真实触发 `[仍需实测]`。
+
+## 12. CLI 退出码契约（0/1/2）与 stub 后端
+
+**背景**：库已具备 attach/maps/read/write/step 能力，但 `cmd/main` 仍是模板
+`Hello`，无法作为诊断/演示入口；工作区 R2 三核心 CLI 与 ADR-0011 D6 已确立
+`0=成功 / 1=运行失败 / 2=用法错误` 口径。
+
+**决策**：`cmd/main` 落地 CLI 骨架：
+
+- 子命令 `attach <pid>` / `maps <pid>` / `read <pid> <addr> <len>` /
+  `write <pid> <addr> <hex>` / `step <pid>` / `--help`；
+- 地址十六进制（可带 `0x`），长度十进制，写入字节为十六进制串（可空格分隔）；
+- 退出码 `0` 成功 / `1` 库层 `PtraceError` / `2` 用法错误；错误信息走 stderr；
+- 每个成功命令都显式 `detach`（唯一释放点），失败也尝试 detach；
+- 桌面 stub 后端可跑（仅 pid 4242）；真实设备实测 `[仍需实测]`。
+
+**理由**：退出码契约与工作区其它 CLI 统一，便于脚本化；参数解析纯函数可白盒
+测试；不新增库公开 API，不影响 API 快照。
+
+**后果**：正面——库有了可运行的端到端入口与错误路径回归；负面——stub 只模拟
+pid 4242，CLI 的真实价值仍需设备轮验证；帮助文本中的平台限制必须保留
+`[仍需实测]` 标注。

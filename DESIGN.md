@@ -56,7 +56,7 @@
 - **单线程控制模型**：`Target` 非线程安全；跨线程使用必须由调用方串行化。ptrace 的「一个 tracee 只能有一个 tracer」在语义上也不允许并发 attach。
 - 本模块**没有回调**（与 gum / camera2 不同），因此不触发「被钩线程执行 MoonBit 闭包」的线程安全风险（详见 `DECISIONS.md`「无回调设计」）—— 这正是把它排在前者的理由之一。
 - `parse_maps(text)` 为纯函数、无状态，可并发调用。
-- `[待验证假设]` 多线程 `PTRACE_ATTACH` 的逐线程停止语义，以及 `/proc/<pid>/task` 在 attach 状态下的可读性，需设备实测。
+- `[待验证假设]` 多线程 `PTRACE_ATTACH` 的逐线程停止语义，以及 `/proc/<pid>/task` 在 attach 状态下的可读性，需设备实测。设计侧方案（枚举 → 逐 TID attach + waitpid → `TRACECLONE` 竞态 → 回滚）见 `FORWARDING.md` §5，全部 `[仍需实测]`。
 
 ## 7. 平台约束与外部依赖
 
@@ -114,6 +114,28 @@ shim 清单：`mb_ptrace_attach` / `mb_ptrace_detach` / `mb_ptrace_read_mem` / `
 detach 幂等措辞统一。
 **仍无**真实 libc ptrace / `process_vm_*` 转发与设备实测（留待 Linux / 设备阶段，见 `DECISIONS.md`「风险与待验证」）。
 
+### 13.1 R4 增量（2026-11-09，仅桌面可验证部分）
+
+- **`access_plan.mbt`（新增，包私有）**：跨页访问分段计划。保守 4 KiB 粒度、
+  段数上限 fail-closed、按方向映射 `ReadFailed`/`WriteFailed`；
+  `Target::read_bytes` / `write_bytes` 已接入逐段调用，任一段失败即整体失败
+  （不静默截断），错误携带失败段地址/长度/序号。
+- **`errno_map.mbt`（新增，包私有）**：真实转发层 errno 分类映射
+  （`ESRCH`/`EPERM`/`EACCES`/`EFAULT`/`EIO`/`EINVAL`/`ENOSYS`/`EINTR`/`EBUSY`/`ECHILD`
+  → 12 个 `PtraceError` 构造），定义 `-1000 - errno` 真实状态通道，
+  与 stub 合成码 `-1..-8` 隔离；`SelinuxDenied` 仍只由 stub `-4`/显式探测产生。
+- **stub fail-closed 修复**：`stub/ptrace_stub.c` 的句柄槽在 detach 后被复用，
+  修复「同一进程内第 9 次 attach 假性失败」；stub 仍只模拟 pid 4242，
+  未知 pid / 非法地址 / 只读页写入一律显式错误。
+- **CLI 骨架**：`cmd/main` 落地 `attach` / `maps` / `read` / `write` / `step`
+  子命令与参数解析，退出码 `0=成功 / 1=运行失败 / 2=用法错误`；
+  桌面 stub 后端可跑，真实设备实测留待 E5 `[仍需实测]`。
+- **测试**：18 项既有基线零删改，新增 29 项（分段计划 9 / errno 7 /
+  fail-closed 5 / CLI 5 / 多页 fixture 3），总计 **47/47** 通过（`[已复验-本地等价]`）。
+- **真实转发设计**：`FORWARDING.md` 给出 7 个 shim 的 libc 转发规格、
+  跨页/部分读写、`mprotect` 写入策略、多线程逐线程停止、`waitpid` 细节、
+  内核差异降级；**全部真实路径标 `[仍需实测]`**（E5 未解禁）。
+
 ## References
 
-本仓库内文档：`DECISIONS.md`（设计决策记录：轻量选型、无回调设计、native 目标、`parse_maps` 纯函数、`MemoryView` 可替换性、API 冻结前收紧、风险与待验证、平台与集成约束）· `API.md` · `README.md` · `README.mbt.md`
+本仓库内文档：`FORWARDING.md`（真实转发层设计，逐条 `[仍需实测]`）· `DECISIONS.md`（设计决策记录：轻量选型、无回调设计、native 目标、`parse_maps` 纯函数、`MemoryView` 可替换性、API 冻结前收紧、分段计划与 errno 通道、CLI 退出码、风险与待验证、平台与集成约束）· `API.md` · `README.md` · `README.mbt.md`

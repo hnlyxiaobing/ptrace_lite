@@ -33,6 +33,10 @@
 | `mb_ptrace_task_count(pid : Int32) -> Int32` | — | `/proc/<pid>/task` 条目数，供线程枚举分配缓冲 |
 
 > `#borrow` / `#owned` 是**写在 fn 声明之前的独立属性行**，不是参数注解。本模块无回调，因此不需要 `FuncRef` 与 `#owned` 闭包。
+>
+> **真实转发层状态通道（R4 设计）**：真实 libc 路径返回 `-1000 - errno`（`<= -1001`），
+> 与 stub 合成码 `-1..-8` 并存、互不冲突；分类映射见 `errno_map.mbt` 与 `FORWARDING.md` §1.2。
+> 7 个符号/签名不变，仍为包私有 ABI；真实路径 **`[仍需实测]`**。
 
 ## 值类型 / 错误 / 契约
 
@@ -79,7 +83,11 @@
 
 ## 状态与已知阻塞
 
-**API 冻结前整改实跑**：`moon clean` / `moon check --deny-warn` / `moon build` /
-`moon test`（18 测试全过）/ `moon fmt --check` 全部 exit 0（桌面 C stub 环境）。
-`parse_maps` 纯测可在桌面 CI 跑；真实 libc ptrace / `process_vm_*` 转发与 attach 相关
-设备实测留待 **Linux / 设备阶段**（风险与待验证见 `DECISIONS.md`）。API 快照：`pkg.generated.mbti`（由工具链自动同步至整改后公开面，维护时以 `moon info` 复核为准）。
+**R4 桌面可验证增量实跑（2026-11-09）**：`moon check --deny-warn` / `moon build` /
+`moon test`（**47/47**：18 基线 + 29 新增）/ `moon fmt --check` 全绿；公开 API 面
+**零变化**（新增 `access_plan.mbt` / `errno_map.mbt` 均为包私有，`moon info` 后
+`pkg.generated.mbti` 与 `cmd/main/pkg.generated.mbti` diff=0）；
+`parse_maps` 纯测与分段/errno/CLI 白盒测试可在桌面 CI 跑；
+真实 libc ptrace / `process_vm_*` 转发与 attach 相关设备实测留待 **Linux / 设备阶段**
+（E5；风险与待验证见 `DECISIONS.md`，方案见 `FORWARDING.md`，均标 `[仍需实测]`）。
+API 快照：`pkg.generated.mbti`（由工具链 `rr_moon_pkg` 自动同步，维护时以 `moon info` 复核为准）。
