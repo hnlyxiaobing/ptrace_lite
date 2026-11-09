@@ -15,7 +15,7 @@ version = "0.1.0"
 
 readme = "README.mbt.md"
 
-repository = ""
+repository = "https://github.com/hnlyxiaobing/ptrace_lite"
 
 license = "Apache-2.0"
 
