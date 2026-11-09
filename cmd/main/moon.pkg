@@ -2,4 +2,9 @@
 //   "hnlyxiaobing/ptrace_lite" @lib,
 // }
 
+import {
+  "hnlyxiaobing/ptrace_lite",
+  "moonbitlang/core/env",
+}
+
 pkgtype(kind: "executable")
