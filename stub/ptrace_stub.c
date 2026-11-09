@@ -1,7 +1,7 @@
 /*
  * ptrace_lite — native C shim implementation (desktop stub).
  *
- * ！！重要标注：本文件是「桌面 stub」实现，真实 libc 转发留待 Linux/设备轮次。
+ * ！！重要标注：本文件是「桌面 stub」实现，真实 libc 转发留待 Linux / 设备阶段。
  * 它用可移植 C 代码模拟 tracee 句柄、内存页与 /proc 文本，使
  * moon build / moon test 在 Windows + MSVC 主机上真实编译、链接、运行。
  * 语义与 API.md 一致；attach 的可失败路径通过模拟 pid 参数触发。
@@ -28,7 +28,7 @@
  *   7003  存在但 ptrace/proc 权限拒绝
  *   其他  不存在
  *
- * 未来 Linux 真实路径（留待设备轮次）：mb_ptrace_attach 转发 PTRACE_ATTACH +
+ * 未来 Linux 真实路径（留待设备实测）：mb_ptrace_attach 转发 PTRACE_ATTACH +
  * waitpid，read/write 转发 process_vm_readv / process_vm_writev，read_maps 读
  * /proc/<pid>/maps 并按上述协议附加 /proc/<pid>/task 摘要，task_count 数
  * /proc/<pid>/task 条目。

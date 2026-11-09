@@ -2,7 +2,7 @@
 /// Target 实现：状态机、错误映射（C status → PtraceError）、缓冲容量校验、
 /// shim 内部「/proc 文本包」协议。shim 协议与状态码见 `stub/ptrace_stub.c` 头注释。
 ///
-/// 桌面 stub 提供模拟 tracee；真实 libc 转发留待 Linux/设备轮次。
+/// 桌面 stub 提供模拟 tracee；真实 libc 转发留待 Linux / 设备阶段。
 /// UTF-8 解码经 `moonbitlang/core/encoding/utf8`（见 `moon.pkg` import）。
 
 ///|
@@ -191,7 +191,7 @@ fn parse_task_section(
 
 ///|
 /// 只读访问目标状态机当前状态（`Target.state` 为**私有字段**，
-/// 经此访问器读取；冻结前 P0 决策 5：字段级可见性收紧 + 只读访问器，
+/// 经此访问器读取；API 冻结前收紧决策：字段级可见性收紧 + 只读访问器，
 /// 其余公开方法签名零变化）。
 pub fn Target::state(self : Target) -> TargetState {
   self.state
@@ -205,7 +205,7 @@ pub fn Target::state(self : Target) -> TargetState {
 ///   `UnsupportedKernel` / `AlreadyAttached`，经由就绪性探测映射 C 状态码。
 /// - 线程：单线程控制模型；`Target` 非线程安全，跨线程使用须由调用方串行化。
 /// - 非目标：不做符号解析、不做 inline hook、不做断点管理、不追求跨平台。
-/// - TODO(设备轮次): 多线程 attach 语义、ARM64 指令边界判断实测。
+/// - TODO(设备实测): 多线程 attach 语义、ARM64 指令边界判断实测。
 pub fn Target::attach(pid : Pid) -> Target raise PtraceError {
   // 1) 就绪性探测：capacity = 0 的 read_maps（不写任何缓冲），区分失败类别。
   let empty : FixedArray[Byte] = FixedArray::make(0, b'\x00')

@@ -1,8 +1,8 @@
 // Blackbox tests run against the package's public API. Use `@ptrace_lite` to import.
 // 桌面 stub 注：走 stub/ptrace_stub.c 的模拟 tracee（pid 4242 正常、7001 SELinux、
-// 7002 内核不支持、7003 权限拒绝、其余不存在）；真实 libc 转发留待 Linux/设备轮次。
+// 7002 内核不支持、7003 权限拒绝、其余不存在）；真实 libc 转发留待 Linux / 设备阶段。
 //
-// 冻结前 P0（决策 5/6）：`Target.state` 为私有字段，黑盒经只读访问器
+// API 冻结前收紧（见 DECISIONS.md）：`Target.state` 为私有字段，黑盒经只读访问器
 // `Target::state()` 读取；7 个 `mb_ptrace_*` shim 已移出公开 API，
 // 直接调用 shim 的用例（capacity -7、stale handle -8）转白盒
 // `ptrace_lite_wbtest.mbt`，黑盒保留等价的 MoonBit 层语义断言。
@@ -119,7 +119,7 @@ test "attach twice raises AlreadyAttached" {
 }
 
 ///|
-/// 缓冲容量校验（shim ABI 语义，冻结前随 shim 私有化转白盒：
+/// 缓冲容量校验（shim ABI 语义，API 冻结前随 shim 私有化转白盒：
 /// 见 `ptrace_lite_wbtest.mbt` 的 "internal: shim capacity checks"）。
 ///
 /// 黑盒等价语义：MoonBit 层按请求长度自建缓冲，容量由 API 保证，

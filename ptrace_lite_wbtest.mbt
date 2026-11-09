@@ -88,7 +88,7 @@ test "internal: parse_task_section" {
 
 ///|
 /// 内部：shim 容量校验（原黑盒 "capacity checks"，随 `mb_ptrace_*` 私有化
-/// 转白盒；冻结前 P0 决策 6）。shim 侧对 capacity / length 超限返回 -7；
+/// 转白盒，API 冻结前收紧）。shim 侧对 capacity / length 超限返回 -7；
 /// read_maps 为 snprintf 语义（截断写入 + 返回所需长度）。
 test "internal: shim capacity checks" {
   let small : FixedArray[Byte] = FixedArray::make(4, b'\x00')
@@ -110,7 +110,7 @@ test "internal: shim capacity checks" {
 
 ///|
 /// 内部：空句柄 / 失效句柄被 shim 拒绝（-8）（原黑盒 "stale handle rejected"
-/// 随 `mb_ptrace_*` 私有化转白盒；冻结前 P0 决策 6）。
+/// 随 `mb_ptrace_*` 私有化转白盒，API 冻结前收紧）。
 test "internal: stale handle rejected" {
   let t = Target::attach(4242)
   let h = t.handle

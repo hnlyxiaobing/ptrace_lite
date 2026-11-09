@@ -3,7 +3,7 @@
 ///
 /// 本文件：外部句柄声明、`extern "C"` 薄 shim 签名、中性值类型、错误模型、`MemoryView` trait。
 /// 公开 API 的实现见 `target.mbt`（Target 状态机）与 `maps_parser.mbt`（`parse_maps` 纯解析）。
-/// C shim 实现见 `stub/ptrace_stub.c`（桌面 stub，真实 libc 转发留待 Linux/设备轮次）。
+/// C shim 实现见 `stub/ptrace_stub.c`（桌面 stub，真实 libc 转发留待 Linux / 设备阶段）。
 ///
 /// 边界：只做 attach / maps / peek-poke / 单步 / 线程枚举。
 /// 不做符号解析（配 `dwarfscope`）、不做指令级 inline hook（与 frida_gum_ffi 互为备选）。
@@ -62,7 +62,7 @@ pub(all) enum TargetState {
 ///|
 /// MoonBit 侧目标包装值。`handle` 为 C 侧裸指针，`pid` 用于 `/proc` 路径构造。
 /// `handle` 只能由 `Target::detach` 释放一次。
-/// `state` 为可变状态机字段（**私有字段**，冻结前 P0 决策 5，经只读访问器
+/// `state` 为可变状态机字段（**私有字段**，API 冻结前收紧，经只读访问器
 /// `Target::state()` 读取）：`step` 进入 `Stepping`、`detach` 进入 `Detached`；
 /// 释放失败进入 `Failed`。实现保证它与 C 侧句柄状态一致（见 `target.mbt`）。
 pub(all) struct Target {
@@ -100,13 +100,13 @@ pub trait MemoryView {
 }
 
 ///|
-/// ---- 外部 C shim 声明（**包私有，非公共 API**；冻结前 P0 决策 6）----
+/// ---- 外部 C shim 声明（**包私有，非公共 API**；API 冻结前移出公开 API）----
 /// 符号由 `stub/ptrace_stub.c`（native-stub）提供：桌面 stub 模拟 tracee 句柄、
-/// 内存页与 /proc 文本；真实 libc ptrace / process_vm_readv 转发留待 Linux/设备轮次。
+/// 内存页与 /proc 文本；真实 libc ptrace / process_vm_readv 转发留待 Linux / 设备阶段。
 /// 内部状态码与「/proc 文本包」协议见 stub 文件头部注释。
 /// 可见性：7 个 `mb_ptrace_*` 均为**私有实现 ABI**（不再出现在公开快照），
 /// MoonBit 层只经 `Target::{attach,maps,read_bytes,write_bytes,step,threads,detach}` 调用；
-/// 符号名与签名保持不变，R2 真实对接无需改 ABI。
+/// 符号名与签名保持不变，真实 libc 对接无需改 ABI。
 
 ///|
 /// `PTRACE_ATTACH` 并 waitpid 停住目标；返回 C 侧句柄（0 表示失败）。
