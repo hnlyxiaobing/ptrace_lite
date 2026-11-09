@@ -1,7 +1,7 @@
 ///|
 /// ptrace-cli：ptrace_lite 的轻量 CLI 骨架（attach / maps / read / write / step）。
 ///
-/// 退出码契约（与工作区 R2 三核心 CLI、ADR-0011 D6 同口径）：
+/// 退出码契约（与本仓库既有 CLI 统一口径）：
 /// - `0` = 成功（命令完成并已 detach）
 /// - `1` = 运行失败（库层 `PtraceError`：attach 失败、非法地址、W^X 只读页等）
 /// - `2` = 用法错误（未知命令 / 缺参 / 非法数字 / 非法十六进制）
