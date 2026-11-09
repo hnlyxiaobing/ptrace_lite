@@ -84,7 +84,7 @@
 ## 状态与已知阻塞
 
 **R4 桌面可验证增量实跑（2026-11-09）**：`moon check --deny-warn` / `moon build` /
-`moon test`（**47/47**：18 基线 + 29 新增）/ `moon fmt --check` 全绿；公开 API 面
+`moon test`（**49/49**：18 基线 + 31 新增）/ `moon fmt --check` 全绿；公开 API 面
 **零变化**（新增 `access_plan.mbt` / `errno_map.mbt` 均为包私有，`moon info` 后
 `pkg.generated.mbti` 与 `cmd/main/pkg.generated.mbti` diff=0）；
 `parse_maps` 纯测与分段/errno/CLI 白盒测试可在桌面 CI 跑；

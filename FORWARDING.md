@@ -470,7 +470,7 @@ process_vm_* 调用
 | errno 分类 | 通道边界 + 读 / 写 / attach / detach / step / `/proc` / 线程 + 状态包装 |
 | stub fail-closed | detach 后 maps/threads、跨区间读、只读页写、零长度、失败 attach 不留句柄 |
 | CLI | 子命令解析、数字格式、用法错误、退出码 0/1/2、重复 attach/detach 句柄复用 |
-| 基线 | 既有 18 项测试零删改，全部仍通过（总 47） |
+| 基线 | 既有 18 项测试零删改，全部仍通过（总 49） |
 
 ### 9.2 设备轮（E5 解禁后，均 `[仍需实测]`）
 

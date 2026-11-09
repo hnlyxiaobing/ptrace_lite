@@ -72,10 +72,12 @@ test "internal: access plan multi page coverage" {
 }
 
 ///|
-/// 分段计划：零长度 → 空计划（合法无操作，不报错）。
+/// 分段计划：零长度 → 空计划（合法无操作，不报错，且不要求页大小合法）。
 test "internal: access plan zero length" {
   let plan = plan_access(AccessKind::Read, 0x10000UL, 0, 4096)
   assert_eq(plan.segments.length(), 0)
+  let plan2 = plan_access(AccessKind::Write, 0xFFFFFFFFFFFFFFFFUL, 0, 0)
+  assert_eq(plan2.segments.length(), 0)
 }
 
 ///|
@@ -121,4 +123,25 @@ test "internal: access plan segment cap fail-closed" {
     ignore(plan_access(AccessKind::Read, 0x1000UL, too_big, 4096))
   })
   assert_true(e is PtraceError::ReadFailed(0x1000UL, _, _))
+}
+
+///|
+/// 分段计划：上限边界（页对齐请求恰好等于上限）→ 成功且段数精确。
+test "internal: access plan cap boundary aligned request" {
+  let limit = MAX_ACCESS_SEGMENTS * 4096
+  let plan = plan_access(AccessKind::Read, 0UL, limit, 4096)
+  assert_eq(plan.segments.length(), MAX_ACCESS_SEGMENTS)
+  assert_eq(plan.segments[MAX_ACCESS_SEGMENTS - 1].length, 4096)
+  assert_plan_covers(plan, 0UL, limit, 4096)
+}
+
+///|
+/// 分段计划：未对齐起点的同长度请求会多产生一段 → 必须 fail-closed，
+/// 不能因预检查按 `length / page` 估算而放过 cap+1 段。
+test "internal: access plan cap fail-closed unaligned request" {
+  let limit = MAX_ACCESS_SEGMENTS * 4096
+  let e = expect_ptrace_error(() => {
+    ignore(plan_access(AccessKind::Read, 1UL, limit, 4096))
+  })
+  assert_true(e is PtraceError::ReadFailed(1UL, _, _))
 }

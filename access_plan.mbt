@@ -78,6 +78,10 @@ fn plan_access(
   if length < 0 {
     raise access_plan_error(kind, address, length, "negative length")
   }
+  let segments : Array[AccessSegment] = []
+  if length == 0 {
+    return AccessPlan::{ segments, }
+  }
   if page_size <= 0 {
     raise access_plan_error(
       kind,
@@ -85,10 +89,6 @@ fn plan_access(
       length,
       "invalid page size (\{page_size})",
     )
-  }
-  let segments : Array[AccessSegment] = []
-  if length == 0 {
-    return AccessPlan::{ segments, }
   }
   let page_u = page_size.to_uint64()
   let len_u = length.to_uint64()
@@ -106,6 +106,14 @@ fn plan_access(
   let mut cursor = address
   let mut consumed = 0
   while consumed < length {
+    if segments.length() >= MAX_ACCESS_SEGMENTS {
+      raise access_plan_error(
+        kind,
+        address,
+        length,
+        "request too large to segment (cap \{MAX_ACCESS_SEGMENTS} segments, page \{page_size})",
+      )
+    }
     let remaining = (length - consumed).to_uint64()
     let to_page_end = page_u - cursor % page_u
     let chunk = if to_page_end > remaining {

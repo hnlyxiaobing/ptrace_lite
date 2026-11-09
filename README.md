@@ -2,7 +2,7 @@
 
 **Linux / Android 轻量进程控制库 —— attach、maps 解析、peek/poke、单步与线程枚举的 FFI 契约。**
 
-> 状态：**实现轮完成（2026-11-07）+ API 冻结前整改 + R4 桌面可验证增量（2026-11-09）**。1 个 `#external` 句柄、7 个 `extern "C"` shim（**包私有，私有实现 ABI，非公共 API**）、中性值类型、`MemoryView` trait 与全部包装 API 均已实现（桌面 `stub/ptrace_stub.c` 双路径）；`moon clean` / `moon check --deny-warn` / `moon build` / `moon test`（**47 测试全过**：18 基线 + 29 新增）/ `moon fmt --check` 全绿。
+> 状态：**实现轮完成（2026-11-07）+ API 冻结前整改 + R4 桌面可验证增量（2026-11-09）**。1 个 `#external` 句柄、7 个 `extern "C"` shim（**包私有，私有实现 ABI，非公共 API**）、中性值类型、`MemoryView` trait 与全部包装 API 均已实现（桌面 `stub/ptrace_stub.c` 双路径）；`moon clean` / `moon check --deny-warn` / `moon build` / `moon test`（**49 测试全过**：18 基线 + 31 新增）/ `moon fmt --check` 全绿。
 > **R4 增量（桌面可验证部分）**：跨页分段计划（`access_plan.mbt`）与 errno 分类映射（`errno_map.mbt`）落地并接入 `read_bytes`/`write_bytes`；stub 句柄槽复用修复；`cmd/main` 真实 CLI 骨架（`attach`/`maps`/`read`/`write`/`step`，退出码 0/1/2）；真实转发设计见 `FORWARDING.md`（逐条 `[仍需实测]`）。
 > **真实 libc ptrace / `process_vm_*` 转发与设备实测留待 Linux / 设备阶段**（E5 未解禁；风险与待验证项见 `DECISIONS.md`、方案见 `FORWARDING.md`）；本轮保持项目内 C stub 双路径，未链接/下载任何外部库。
 > **API 冻结前收紧决策**（详见 `DECISIONS.md`）：`Target.state` 收紧为 `priv` 私有字段 + 只读访问器 `Target::state()`（字段级可见性可用，仅收紧该字段，其余公开方法签名零变化）· 七个 `mb_ptrace_*` shim 移出公开 API · 追认 `pub impl MemoryView for Target`（**冻结后新增 impl 即破坏性变更**）· `detach` 措辞统一为「不会二次释放，重复调用返回明确错误（`NotAttached`）」。
@@ -61,9 +61,9 @@ pid 4242；真实 libc 转发与 Linux/Android 设备实测留待 E5 解禁 `[�
 - **可桌面纯测**：`parse_maps(text)` 的 golden 测试（不需要 attach、不需要 root），覆盖匿名映射、文件映射、权限位、缺 path、畸形行。
 - **设备集成**：attach → maps → read → write → step → threads → detach 全链路在受限设备上跑通，记录 errno；负例覆盖 `NotAttached` / `AlreadyAttached` / `ProcessNotFound`；`detach` **不会二次释放，重复调用返回明确错误（`NotAttached`）**，detach 后句柄不悬挂。
 - **验收标准（实现轮）**：全链路在目标设备可跑；`parse_maps` golden 全绿；验收门禁 `moon check --deny-warn` 转绿（API 冻结前整改起已绿）。
-- **桌面 stub 实测（实现轮 + API 冻结前整改 + R4）**：`moon build` ✅ / `moon test` ✅ **47/47**：
+- **桌面 stub 实测（实现轮 + API 冻结前整改 + R4）**：`moon build` ✅ / `moon test` ✅ **49/49**：
   18 项基线零删改（全链路、`state()` 访问器、错误映射、shim ABI 白盒、`parse_maps` golden ×4、畸形行负例）
-  + 29 项新增（跨页分段计划 9、errno 分类 7、fail-closed 5、CLI 5、多页 fixture 3）；真实 libc 转发与设备实测留待后续轮。
+  + 31 项新增（跨页分段计划 11、errno 分类 7、fail-closed 5、CLI 5、多页 fixture 3）；真实 libc 转发与设备实测留待后续轮。
 
 ## 当前状态 / 本轮产物
 
@@ -76,7 +76,7 @@ pid 4242；真实 libc 转发与 Linux/Android 设备实测留待 E5 解禁 `[�
 | `FORWARDING.md`：真实 libc 转发 / 跨页拆分 / `mprotect` / 多线程停止 / 内核降级设计 | ✅ 设计侧，逐条 `[仍需实测]` |
 | `pkg.generated.mbti` API 快照（由工具链 `rr_moon_pkg` 在 `moon check` / `moon build` 时自动同步至整改后公开面：7 个 shim 移除、`Target.state` 私有 + `Target::state()` 新增；维护时以 `moon info` 复核为准；R4 无公开 API 变化，快照零 diff） | ✅ |
 | 真实 libc 转发 / 设备实测（SELinux、ptrace_scope、W^X） | ❌ 后续阶段（见 `DECISIONS.md`「风险与待验证」、`FORWARDING.md` §9） |
-| `moon clean` / `moon check --deny-warn` / `moon build` / `moon test` / `moon fmt --check` | ✅ 全绿（47 测试） |
+| `moon clean` / `moon check --deny-warn` / `moon build` / `moon test` / `moon fmt --check` | ✅ 全绿（49 测试） |
 
 ## 文档索引
 
