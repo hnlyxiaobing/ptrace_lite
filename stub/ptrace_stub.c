@@ -8,10 +8,11 @@
  *
  * 内部 shim 协议（与 MoonBit 侧 glue 共享，非公开 API）：
  *   - 返回值 0 或正数 = 成功（读写字节数 / 文本所需长度 / 线程数）。
- *   - 返回值负数 = 失败类别：
- *       -1 通用失败        -2 无此进程(ESRCH)   -3 权限拒绝(EPERM/EACCES)
- *       -4 SELinux 拒绝     -5 内核不支持(ENOSYS) -6 已被本 tracer attach(EBUSY)
- *       -7 参数/地址非法(EINVAL) -8 句柄为空或已失效
+ *   - 返回值负数 = 失败类别（语义标签，非 -errno 数值；真实路径须用
+ *     -1000 - errno 通道，见 errno_map.mbt / FORWARDING.md §1.2）：
+ *       -1 通用失败        -2 无此进程(语义 ESRCH)   -3 权限拒绝(语义 EPERM/EACCES)
+ *       -4 SELinux 拒绝     -5 内核不支持(语义 ENOSYS) -6 已被本 tracer attach(语义 EBUSY)
+ *       -7 参数/地址非法(语义 EINVAL) -8 句柄为空或已失效
  *   - mb_ptrace_read_maps 是 snprintf 语义：写入 min(所需长度, capacity) 字节，
  *     返回完整内容所需长度；capacity == 0 时为「就绪性探测」（不写入），用于
  *     attach 前区分 ProcessNotFound / AttachDenied / SelinuxDenied /

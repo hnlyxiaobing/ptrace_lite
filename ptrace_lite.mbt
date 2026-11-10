@@ -141,7 +141,8 @@ extern "C" fn mb_ptrace_write_mem(
 extern "C" fn mb_ptrace_step(handle : TraceeRaw) -> Int32 = "mb_ptrace_step"
 
 ///|
-/// 读取 `/proc/<pid>/maps` 全文到调用方缓冲；`dst` 为 `#borrow`。
+/// snprintf 语义：写入 min(所需, capacity) 字节的 /proc 文本包，返回所需长度；
+/// capacity=0 为就绪性探测。`dst` 为 `#borrow`。
 #borrow(dst)
 extern "C" fn mb_ptrace_read_maps(
   pid : Int32,

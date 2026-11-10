@@ -29,7 +29,7 @@
 | `mb_ptrace_read_mem(handle, address : Address, dst : FixedArray[Byte], length : Int32) -> Int32` | `#borrow(dst)` | `process_vm_readv`，C 侧填充 dst |
 | `mb_ptrace_write_mem(handle, address : Address, src : Bytes, length : Int32) -> Int32` | `#borrow(src)` | `process_vm_writev`，C 侧只读 src |
 | `mb_ptrace_step(handle : TraceeRaw) -> Int32` | — | `PTRACE_SINGLESTEP`，0 = 成功 |
-| `mb_ptrace_read_maps(pid : Int32, dst : FixedArray[Byte], capacity : Int32) -> Int32` | `#borrow(dst)` | 读 `/proc/<pid>/maps` 全文，返回实际长度 |
+| `mb_ptrace_read_maps(pid : Int32, dst : FixedArray[Byte], capacity : Int32) -> Int32` | `#borrow(dst)` | snprintf 语义：写入 min(所需, capacity) 字节的 /proc 文本包（maps + `__tasks__`），返回所需长度；capacity=0 为就绪性探测 |
 | `mb_ptrace_task_count(pid : Int32) -> Int32` | — | `/proc/<pid>/task` 条目数，供线程枚举分配缓冲 |
 
 > `#borrow` / `#owned` 是**写在 fn 声明之前的独立属性行**，不是参数注解。本模块无回调，因此不需要 `FuncRef` 与 `#owned` 闭包。

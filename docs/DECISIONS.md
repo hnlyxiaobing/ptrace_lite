@@ -144,7 +144,7 @@ MoonBit 层无法区分「stub 合成码」与「真实 errno」，错误分类�
 - `EFAULT` → `ReadFailed`/`WriteFailed`（bad address，带失败段）；
 - `EIO` → 方向错误 / `/proc` 与线程枚举的 `UnsupportedKernel`；
 - `EINVAL` → 方向错误 / `AttachDenied`；
-- `ENOSYS` → `UnsupportedKernel`（`process_vm_*`/`ptrace` 缺失）；
+- `ENOSYS` → attach/step/proc/thread 操作报 `UnsupportedKernel`；read/write 内存操作报方向错误（`ReadFailed`/`WriteFailed`）；
 - `EINTR` → 显式错误（真实 shim 应重试，不得静默吞掉）；
 - `EBUSY` → `AlreadyAttached`；未知 errno → 方向错误并带 errno。
 
