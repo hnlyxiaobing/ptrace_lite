@@ -1,83 +1,63 @@
-# hnlyxiaobing/ptrace_lite
+# ptrace_lite · 轻量进程控制
 
-**Linux / Android 轻量进程控制库 —— attach、maps 解析、peek/poke、单步与线程枚举的 FFI 契约。**
+> 独立发布单元 ｜ L2 动态验证 ｜ `preferred_target = native` ｜ Apache-2.0
+> 状态：`moon test` **49/49** 通过（2026-11-11 本机实测）；本文件是本仓库**唯一**说明文档。
+> 公开 API 以 `pkg.generated.mbti` 为准（由 `moon info` 生成，禁手工编辑）；加法性变更须登记簿记 + 快照审阅 + 快照门禁。
 
-> 状态：**实现轮完成（2026-11-07）+ API 冻结前整改 + R4 桌面可验证增量（2026-11-09）**。1 个 `#external` 句柄、7 个 `extern "C"` shim（**包私有，私有实现 ABI，非公共 API**）、中性值类型、`MemoryView` trait 与全部包装 API 均已实现（桌面 `stub/ptrace_stub.c` 双路径）；`moon clean` / `moon check --deny-warn` / `moon build` / `moon test`（**49 测试全过**：18 基线 + 31 新增）/ `moon fmt --check` 全绿。
-> **R4 增量（桌面可验证部分）**：跨页分段计划（`access_plan.mbt`）与 errno 分类映射（`errno_map.mbt`）落地并接入 `read_bytes`/`write_bytes`；stub 句柄槽复用修复；`cmd/main` 真实 CLI 骨架（`attach`/`maps`/`read`/`write`/`step`，退出码 0/1/2）；真实转发设计见 `docs/FORWARDING.md`（逐条 `[仍需实测]`）。
-> **真实 libc ptrace / `process_vm_*` 转发与设备实测留待 Linux / 设备阶段**（E5 未解禁；风险与待验证项见 `docs/DECISIONS.md`、方案见 `docs/FORWARDING.md`）；本轮保持项目内 C stub 双路径，未链接/下载任何外部库。
-> **API 冻结前收紧决策**（详见 `docs/DECISIONS.md`）：`Target.state` 收紧为 `priv` 私有字段 + 只读访问器 `Target::state()`（字段级可见性可用，仅收紧该字段，其余公开方法签名零变化）· 七个 `mb_ptrace_*` shim 移出公开 API · 追认 `pub impl MemoryView for Target`（**冻结后新增 impl 即破坏性变更**）· `detach` 措辞统一为「不会二次释放，重复调用返回明确错误（`NotAttached`）」。
-> `preferred_target` 本轮由 `wasm` 改为 `native`（唯一配置改动，理由见 `docs/DECISIONS.md`）。
-> 定位：作为动态侧验证的**首选先行路径**（排序判据：是否阻塞交付 / 是否支撑动态验证闭环 / 可行性与许可 / 维护与可测 / 是否有更小替代，见 `docs/DECISIONS.md`）；与 `frida_gum_ffi` **互斥备选、零互相 import**。
+## 1. 定位与边界
 
-## 定位与为什么存在
+用比 Frida 更小的依赖面提供进程 attach、内存读写与 `/proc` 解析能力。
 
-选型复核（2026-11-06 检索 mooncakes.io）：`ptrace` 的两个注册表命中均为无关包——进程注入与控制能力在 MoonBit 生态完全空白，ptrace 无可用包。与 frida-gum 相比，本库**不依赖 devkit、少一层许可审查（无 wxWindows 3.1 许可门禁）、体积更小**，正是「更小替代方案」这一判据的落地（选型背景、决策与后果见 `docs/DECISIONS.md`）。
+**能力**
 
-它对最终目标的贡献是：**在静态线索（`apk`/`axml`/`dex`）指向候选符号后，用最小代价在受限设备上取到该符号的调用参数或内存快照**，把「猜」变成「验证」。因此本库排在 `frida_gum_ffi` 之前，而后者因「许可逐项审查 + 更小替代方案评估」两道门禁未解除而排后（见 `docs/DECISIONS.md`）。
+- `parse_maps` 纯函数（`/proc/<pid>/maps`）与 `Target` 八个方法
+- 7 个包私有 `mb_ptrace_*` shim；`PtraceError` 12 构造；状态通道 `-1000 - errno`
+- `access_plan` 跨页分段（保守 4 KiB、上限 65,536）与 `errno_map` 分类
+- `pub impl MemoryView for Target`；`Target.state` 私有 + `state()`；`detach` 幂等（`NotAttached`）
+- CLI 五个子命令，退出码 0/1/2
 
-## 能力范围 / 非目标
+**非目标**
 
-- **做**：`PTRACE_ATTACH` / `PTRACE_DETACH`、`/proc/<pid>/maps` 解析、内存 peek/poke（`process_vm_readv` / `process_vm_writev`）、`PTRACE_SINGLESTEP`、线程枚举（`/proc/<pid>/task`）。
-- **不做**：符号解析（配 `dwarfscope`）、指令级 inline hook、断点管理、反汇编、ARM64 指令边界判断、跨平台（仅 Linux / Android）。
-- 与 `frida_gum_ffi` 二选一由**组合根**决定；抽象 `MemoryView` 留在本模块内，不新建公共模块，避免循环依赖。
-- 本库不 import `pose` / `apk` / `axml` / `dex` / 任何本地模块（零本地模块 import，见 `docs/DECISIONS.md`）。
+- **真实 `ptrace` / `process_vm` / `waitpid` 链路未实现、未编译、未运行**，不得表述为已跑通
+- 不提供回调式插桩，不依赖 Frida
 
-## 公开接口（速览）
+## 2. 关键设计决策（本仓库自足记录）
 
-`Target::{attach, state, maps, read_bytes, write_bytes, step, threads, detach}` + 纯函数 `parse_maps(text)`；`state` 字段私有，经 `Target::state()` 只读访问。外部句柄与 shim 清单见 `docs/API.md`。
+- 选轻量路线作为 frida 的更小互斥备选；无回调设计，避免被钩线程执行 MoonBit 闭包。
+- 只缓存必要状态；`preferred_target = native`；`Target.state` 私有化以收紧公开面。
+- 真实转发层规格（原 `docs/FORWARDING.md`）要点：7 个 shim 符号与签名不变、公开 API/快照不变；跨页读写按 4 KiB 分段；`mprotect` 写入策略与 `waitpid` 细节、SELinux/`ptrace_scope`/W^X 降级决策全部 `[仍需实测]`，设备轮验证清单未执行。
 
-## CLI（`cmd/main`，非库公开 API）
+## 3. 公开 API 索引（自动抽取 `pkg.generated.mbti` 的 `pub` 声明行；完整字段见快照）
 
 ```text
-moon run cmd/main -- attach 4242
-moon run cmd/main -- maps 4242
-moon run cmd/main -- read 4242 0x10000 4
-moon run cmd/main -- write 4242 0x10010 4142
-moon run cmd/main -- step 4242
-moon run cmd/main -- --help
+pub fn parse_maps(String) -> Array[MemoryRegion] raise PtraceError
+pub(all) struct MemoryProtection {
+pub(all) struct MemoryRegion {
+pub(all) struct Target {
+pub fn Target::attach(Int32) -> Self raise PtraceError
+pub fn Target::detach(Self) -> Unit raise PtraceError
+pub fn Target::maps(Self) -> Array[MemoryRegion] raise PtraceError
+pub fn Target::read_bytes(Self, UInt64, Int32) -> Bytes raise PtraceError
+pub fn Target::state(Self) -> TargetState
+pub fn Target::step(Self) -> Unit raise PtraceError
+pub fn Target::threads(Self) -> Array[ThreadInfo] raise PtraceError
+pub fn Target::write_bytes(Self, UInt64, Bytes) -> Unit raise PtraceError
+pub(all) enum TargetState {
+pub(all) struct ThreadInfo {
 ```
 
-退出码：`0=成功` / `1=运行失败（PtraceError）` / `2=用法错误`。桌面 stub 后端仅模拟
-pid 4242；真实 libc 转发与 Linux/Android 设备实测留待 E5 解禁 `[仍需实测]`。
+## 4. 依赖、平台与许可
 
-## 依赖
+零第三方依赖（仅 `stub/ptrace_stub.c`）；`preferred_target = native`；Apache-2.0。
 
-- **零外部依赖**；独立 `moon.mod`，`moon check --deny-warn` 独立通过。shim 实现仅为**项目内** `stub/ptrace_stub.c` 桌面 stub（7 个 `mb_ptrace_*` 为包私有 ABI，非公共 API），**未链接/下载任何外部库**。
-- 后续轮：`native-stub` C 文件转发 libc `ptrace` / `process_vm_readv` / `process_vm_writev` / `waitpid`，以及 `/proc` 读取；**不需要 frida devkit、不需要 GObject、不需要许可审查**。
+## 5. 命令行与验证
 
-## 平台与许可风险
+- `moon run cmd/main --target native -- <子命令>`；退出码 0=成功 / 1=运行失败 / 2=用法错误。
+- 复验：`moon clean` → `moon check --deny-warn` → `moon build` → `moon test` → `moon fmt --check` → `moon info` 后检查 `pkg.generated.mbti` 无意外 diff。
+- 本仓库为独立 Git 仓库，文档与 CI 均自包含，不依赖工作区其他目录。
 
-| 风险 | 说明 |
-|---|---|
-| 权限 | Android SELinux `untrusted_app` 对 `PTRACE_ATTACH` 的限制、`kernel.yama.ptrace_scope` 取值**待实测**（见 `docs/DECISIONS.md`「风险与待验证」）；错误模型已预留 `SelinuxDenied` / `AttachDenied` |
-| 内核差异 | 不同内核的 `/proc/<pid>/maps` 字段、ptrace 细节差异；`UnsupportedKernel` 已预留 |
-| 指令边界 | ARM64 单步的指令边界判断需要反汇编支持，属明确非目标 |
-| 线程 | 单线程控制模型，`Target` 非线程安全；跨线程使用须由调用方串行化 |
-| 许可 | 仅调用 libc 系统调用封装，无第三方库许可负担；**这是相对 frida-gum 的主要优势** |
-| 平台 | `preferred_target = "native"`；仅 Linux / Android；Windows 主机不可运行（MSVC native 亦无 ptrace） |
+## 6. 风险与未决
 
-## 测试与验收
+- E5：非 Windows 平台 + W^X / SELinux `untrusted_app` / `ptrace_scope` 的实际限制未实测。
+- 真实 libc 转发层是规格而非实现；若长期不排期，该规格只有待办价值。
 
-- **可桌面纯测**：`parse_maps(text)` 的 golden 测试（不需要 attach、不需要 root），覆盖匿名映射、文件映射、权限位、缺 path、畸形行。
-- **设备集成**：attach → maps → read → write → step → threads → detach 全链路在受限设备上跑通，记录 errno；负例覆盖 `NotAttached` / `AlreadyAttached` / `ProcessNotFound`；`detach` **不会二次释放，重复调用返回明确错误（`NotAttached`）**，detach 后句柄不悬挂。
-- **验收标准（实现轮）**：全链路在目标设备可跑；`parse_maps` golden 全绿；验收门禁 `moon check --deny-warn` 转绿（API 冻结前整改起已绿）。
-- **桌面 stub 实测（实现轮 + API 冻结前整改 + R4）**：`moon build` ✅ / `moon test` ✅ **49/49**：
-  18 项基线零删改（全链路、`state()` 访问器、错误映射、shim ABI 白盒、`parse_maps` golden ×4、畸形行负例）
-  + 31 项新增（跨页分段计划 11、errno 分类 7、fail-closed 5、CLI 5、多页 fixture 3）；真实 libc 转发与设备实测留待后续轮。
-
-## 当前状态 / 本轮产物
-
-| 项 | 状态 |
-|---|---|
-| `ptrace_lite.mbt` / `target.mbt` / `maps_parser.mbt`：`#external` 句柄 ×1、`extern "C"` shim ×7（**包私有**）、公开 API ×9（`Target::{attach,state,maps,read_bytes,write_bytes,step,threads,detach}` + `parse_maps`）、`MemoryView` trait（impl 追认见 `docs/API.md`）、`PtraceError`（12 构造） | ✅ |
-| `access_plan.mbt`（跨页分段计划，包私有）+ `errno_map.mbt`（errno 分类与 `-1000 - errno` 通道，包私有），已接入 `read_bytes`/`write_bytes` | ✅ 桌面可验证 |
-| `cmd/main` CLI 骨架：`attach` / `maps` / `read` / `write` / `step`，退出码 0/1/2 | ✅ 桌面 stub 可跑 |
-| `stub/ptrace_stub.c` 句柄槽复用修复（反复 attach/detach 不再假性 `AttachDenied`） | ✅ |
-| `docs/FORWARDING.md`：真实 libc 转发 / 跨页拆分 / `mprotect` / 多线程停止 / 内核降级设计 | ✅ 设计侧，逐条 `[仍需实测]` |
-| `pkg.generated.mbti` API 快照（由工具链 `rr_moon_pkg` 在 `moon check` / `moon build` 时自动同步至整改后公开面：7 个 shim 移除、`Target.state` 私有 + `Target::state()` 新增；维护时以 `moon info` 复核为准；R4 无公开 API 变化，快照零 diff） | ✅ |
-| 真实 libc 转发 / 设备实测（SELinux、ptrace_scope、W^X） | ❌ 后续阶段（见 `docs/DECISIONS.md`「风险与待验证」、`docs/FORWARDING.md` §9） |
-| `moon clean` / `moon check --deny-warn` / `moon build` / `moon test` / `moon fmt --check` | ✅ 全绿（49 测试） |
-
-## 文档索引
-
-`docs/FORWARDING.md`（真实转发层设计，逐条 `[仍需实测]`）· `docs/DESIGN.md`（设计契约）· `docs/API.md`（公开接口）· `docs/DECISIONS.md`（设计决策记录：轻量选型、无回调设计、native 目标、`parse_maps` 纯函数、`MemoryView` 可替换性、API 冻结前收紧、跨页分段与 errno 通道、CLI 退出码、风险与待验证）· `README.mbt.md`
